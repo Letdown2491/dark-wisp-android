@@ -9,6 +9,12 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 object HttpClientFactory {
+    @Volatile private var imageClient: OkHttpClient? = null
+    @Volatile private var generalClient: OkHttpClient? = null
+    @Volatile private var shortTimeoutClient: OkHttpClient? = null
+    @Volatile private var mediaClient: OkHttpClient? = null
+    @Volatile private var nip05Client: OkHttpClient? = null
+    @Volatile private var downloadClient: OkHttpClient? = null
 
     fun createRelayClient(): OkHttpClient {
         // OkHttp's default Dispatcher.maxRequests is 64, which caps concurrent
@@ -38,18 +44,72 @@ object HttpClientFactory {
             .build()
     }
 
-    private var imageClient: OkHttpClient? = null
-
     fun getImageClient(): OkHttpClient {
         imageClient?.let { return it }
-        return createHttpClient(
-            connectTimeoutSeconds = 10,
-            readTimeoutSeconds = 30
-        ).also { imageClient = it }
+        return synchronized(this) {
+            imageClient ?: createHttpClient(
+                connectTimeoutSeconds = 10,
+                readTimeoutSeconds = 30
+            ).also { imageClient = it }
+        }
+    }
+
+    fun getGeneralClient(): OkHttpClient {
+        generalClient?.let { return it }
+        return synchronized(this) {
+            generalClient ?: createHttpClient(
+                connectTimeoutSeconds = 10,
+                readTimeoutSeconds = 15
+            ).also { generalClient = it }
+        }
+    }
+
+    fun getShortTimeoutClient(): OkHttpClient {
+        shortTimeoutClient?.let { return it }
+        return synchronized(this) {
+            shortTimeoutClient ?: createHttpClient(
+                connectTimeoutSeconds = 5,
+                readTimeoutSeconds = 5
+            ).also { shortTimeoutClient = it }
+        }
+    }
+
+    // NIP-05 verification fans out to many distinct hosts; failing fast on
+    // unreachable .well-known/nostr.json endpoints keeps the badge responsive.
+    fun getNip05Client(): OkHttpClient {
+        nip05Client?.let { return it }
+        return synchronized(this) {
+            nip05Client ?: createHttpClient(
+                connectTimeoutSeconds = 5,
+                readTimeoutSeconds = 10
+            ).also { nip05Client = it }
+        }
+    }
+
+    fun getMediaClient(): OkHttpClient {
+        mediaClient?.let { return it }
+        return synchronized(this) {
+            mediaClient ?: createHttpClient(
+                connectTimeoutSeconds = 10,
+                readTimeoutSeconds = 30
+            ).also { mediaClient = it }
+        }
+    }
+
+    // Full-file downloads need longer read timeouts than streaming —
+    // a stalled chunk on a flaky connection shouldn't kill the download.
+    fun getDownloadClient(): OkHttpClient {
+        downloadClient?.let { return it }
+        return synchronized(this) {
+            downloadClient ?: createHttpClient(
+                connectTimeoutSeconds = 30,
+                readTimeoutSeconds = 60
+            ).also { downloadClient = it }
+        }
     }
 
     fun createExoPlayer(context: Context): ExoPlayer {
-        val client = createHttpClient(connectTimeoutSeconds = 10, readTimeoutSeconds = 30)
+        val client = getMediaClient()
         val dataSourceFactory = OkHttpDataSource.Factory(client)
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
