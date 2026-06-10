@@ -49,13 +49,18 @@ class DmListViewModel(app: Application) : AndroidViewModel(app) {
         notifRepo = notificationRepository
     }
 
-    /** Route a non-DM rumor (kind 1 private reply) out of the DM pipeline.
-     *  Returns true when the rumor was consumed. */
+    /** Route a non-DM rumor (kind 1 private reply, or a kind 7 reaction on one) out of the
+     *  DM pipeline. Returns true when the rumor was consumed. */
     private fun routePrivateRumor(rumor: Nip17.Rumor, myPubkey: String): Boolean {
-        if (rumor.kind != 1) return false
+        val isPrivateReplyReaction = PrivateRumorHandler.isPrivateReplyReaction(rumor)
+        if (rumor.kind != 1 && !isPrivateReplyReaction) return false
         val eRepo = eventRepo ?: return true   // can't materialise without repos — drop, don't misfile as DM
         val nRepo = notifRepo ?: return true
-        PrivateRumorHandler.handlePrivateReply(rumor, myPubkey, eRepo, nRepo, muteRepo)
+        if (isPrivateReplyReaction) {
+            PrivateRumorHandler.handlePrivateReaction(rumor, myPubkey, eRepo, nRepo, muteRepo)
+        } else {
+            PrivateRumorHandler.handlePrivateReply(rumor, myPubkey, eRepo, nRepo, muteRepo)
+        }
         return true
     }
 
@@ -79,7 +84,7 @@ class DmListViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Default) {
             val rumor = Nip17.unwrapGiftWrap(keypair.privkey, event) ?: return@launch
 
-            // NIP-17 private reply (kind 1 rumor) — belongs in threads, not DMs
+            // NIP-17 private reply (kind 1 rumor) or a reaction on one (k=1) — belongs in threads, not DMs
             if (routePrivateRumor(rumor, myPubkey)) return@launch
 
             // Private DM reaction — associate with the target message
@@ -171,7 +176,7 @@ class DmListViewModel(app: Application) : AndroidViewModel(app) {
                     try {
                         val rumor = Nip17.unwrapGiftWrapRemote(signer, wrap.event) ?: continue
 
-                        // NIP-17 private reply (kind 1 rumor) — belongs in threads, not DMs
+                        // NIP-17 private reply (kind 1 rumor) or a reaction on one (k=1) — belongs in threads, not DMs
                         if (routePrivateRumor(rumor, myPubkey)) continue
 
                         if (Nip17.isReaction(rumor)) {

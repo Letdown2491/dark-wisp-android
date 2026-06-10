@@ -608,8 +608,17 @@ class EventRouter(
             null
         } ?: return
 
-        // Private DM reaction — associate with the target message, not a new conversation entry
+        // Private reaction (kind 7 rumor). The "k" tag carries the kind of the message
+        // being reacted to: k=1 → reaction on a NIP-17 private reply, route through the
+        // note repository so thread/notification rendering picks it up the same way as
+        // public reactions; k=14 (or absent for back-compat) → DM reaction, route into
+        // the DM conversation entry.
         if (Nip17.isReaction(rumor)) {
+            val kTag = rumor.tags.firstOrNull { it.size >= 2 && it[0] == "k" }?.get(1)
+            if (kTag == "1") {
+                handlePrivateReplyReaction(rumor, myPubkey)
+                return
+            }
             val targetId = rumor.tags.firstOrNull { it.size >= 2 && it[0] == "e" }?.get(1) ?: return
             val participants = Nip17.getConversationParticipants(rumor, myPubkey)
             if (participants.any { muteRepo.isBlocked(it) }) return
@@ -655,6 +664,17 @@ class EventRouter(
             debugRumorJson = Nip17.rumorToJson(rumor)
         )
         dmRepo.addMessage(msg, convKey)
+    }
+
+    private fun handlePrivateReplyReaction(rumor: Nip17.Rumor, myPubkey: String) {
+        com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReaction(
+            rumor = rumor,
+            myPubkey = myPubkey,
+            eventRepo = eventRepo,
+            notifRepo = notifRepo,
+            muteRepo = muteRepo,
+            onMissingProfile = { metadataFetcher.addToPendingProfiles(it) }
+        )
     }
 
     private fun handlePrivateReply(wrap: NostrEvent, rumor: Nip17.Rumor, myPubkey: String) {

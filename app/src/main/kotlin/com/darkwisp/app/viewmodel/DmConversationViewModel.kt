@@ -245,12 +245,21 @@ class DmConversationViewModel(app: Application) : AndroidViewModel(app) {
                     try {
                         val rumor = Nip17.unwrapGiftWrapRemote(signer, wrap.event) ?: continue
 
-                        // NIP-17 private reply (kind 1 rumor) — belongs in threads, not DMs
-                        if (rumor.kind == 1) {
+                        // NIP-17 private reply (kind 1 rumor) or a reaction on one (k=1) —
+                        // belongs in threads, not DMs
+                        val isPrivateReplyReaction =
+                            com.darkwisp.app.repo.PrivateRumorHandler.isPrivateReplyReaction(rumor)
+                        if (rumor.kind == 1 || isPrivateReplyReaction) {
                             if (eventRepo != null && notifRepo != null) {
-                                com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReply(
-                                    rumor, myPubkey, eventRepo, notifRepo, muteRepo
-                                )
+                                if (isPrivateReplyReaction) {
+                                    com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReaction(
+                                        rumor, myPubkey, eventRepo, notifRepo, muteRepo
+                                    )
+                                } else {
+                                    com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReply(
+                                        rumor, myPubkey, eventRepo, notifRepo, muteRepo
+                                    )
+                                }
                             }
                             continue
                         }

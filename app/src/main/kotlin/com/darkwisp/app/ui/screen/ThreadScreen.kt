@@ -50,7 +50,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.darkwisp.app.nostr.Nip69
 import com.darkwisp.app.nostr.NostrEvent
 import com.darkwisp.app.repo.ContactRepository
@@ -108,7 +110,9 @@ fun ThreadScreen(
     fetchGroupPreview: (suspend (String, String) -> com.darkwisp.app.repo.GroupPreview?)? = null,
     onAddEmojiSet: ((String, String) -> Unit)? = null,
     onRemoveEmojiSet: ((String, String) -> Unit)? = null,
-    isEmojiSetAdded: ((String, String) -> Boolean)? = null
+    isEmojiSetAdded: ((String, String) -> Boolean)? = null,
+    /** Whether the user can private-zap [event]'s author (local keypair + DM relays on both sides). */
+    canPrivateZapFor: (NostrEvent) -> Boolean = { false }
 ) {
     val flatThread by viewModel.flatThread.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -196,6 +200,12 @@ fun ThreadScreen(
             unicodeEmojisProvider = { unicodeEmojisState.value },
             onOpenEmojiLibrary = onOpenEmojiLibrary
         )
+    }
+
+    val zapDisabledContext = LocalContext.current
+    val zapDisabledMessage = stringResource(R.string.zap_private_requires_dm_relays)
+    val onZapDisabledTap: () -> Unit = {
+        Toast.makeText(zapDisabledContext, zapDisabledMessage, Toast.LENGTH_SHORT).show()
     }
 
     Scaffold(
@@ -367,7 +377,9 @@ fun ThreadScreen(
                                     onBlockAuthor = { onBlockUser(event.pubkey) },
                                     isFollowingAuthor = followList.let { contactRepo.isFollowing(event.pubkey) },
                                     isOwnEvent = event.pubkey == userPubkey,
-                                    isPrivate = eventRepo.isPrivateReply(event.id),
+                                    isPrivate = eventRepo.isPrivate(event.id),
+                                    zapEnabled = !eventRepo.isPrivate(event.id) || canPrivateZapFor(event),
+                                    onZapDisabledTap = onZapDisabledTap,
                                     onAddToList = { onAddToList(event.id) },
                                     isInList = event.id in listedIds,
                                     onPin = { onTogglePin(event.id) },
@@ -455,7 +467,9 @@ fun ThreadScreen(
                                         onBlockAuthor = { onBlockUser(event.pubkey) },
                                         isFollowingAuthor = followList.let { contactRepo.isFollowing(event.pubkey) },
                                         isOwnEvent = event.pubkey == userPubkey,
-                                        isPrivate = eventRepo.isPrivateReply(event.id),
+                                        isPrivate = eventRepo.isPrivate(event.id),
+                                        zapEnabled = !eventRepo.isPrivate(event.id) || canPrivateZapFor(event),
+                                        onZapDisabledTap = onZapDisabledTap,
                                         onAddToList = { onAddToList(event.id) },
                                         isInList = event.id in listedIds,
                                         onPin = { onTogglePin(event.id) },
