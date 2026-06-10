@@ -134,7 +134,7 @@ class EventRouter(
                             if (convKey != null && msgId != null) {
                                 val sats = Nip57.getZapAmountSats(event)
                                 if (sats > 0) {
-                                    val zapperPubkey = Nip57.getZapperPubkey(event) ?: event.pubkey
+                                    val zapperPubkey = eventRepo.resolveZapSender(event).first ?: event.pubkey
                                     dmRepo.addZap(convKey, msgId, DmZap(zapperPubkey, sats, event.created_at))
                                 }
                             }
@@ -154,7 +154,7 @@ class EventRouter(
                     metadataFetcher.addToPendingProfiles(event.pubkey)
                 }
                 if (event.kind == 9735) {
-                    val zapperPubkey = Nip57.getZapperPubkey(event)
+                    val zapperPubkey = eventRepo.resolveZapSender(event).first
                     if (zapperPubkey != null && eventRepo.getProfileData(zapperPubkey) == null) {
                         metadataFetcher.addToPendingProfiles(zapperPubkey)
                     }
@@ -220,7 +220,7 @@ class EventRouter(
             if (event.kind == 9735) {
                 eventRepo.addEvent(event)
                 eventRepo.addEventRelay(event.id, relayUrl)
-                val zapperPubkey = Nip57.getZapperPubkey(event)
+                val zapperPubkey = eventRepo.resolveZapSender(event).first
                 if (zapperPubkey != null && eventRepo.getProfileData(zapperPubkey) == null) {
                     metadataFetcher.addToPendingProfiles(zapperPubkey)
                 }
@@ -253,7 +253,7 @@ class EventRouter(
                 9735 -> {
                     eventRepo.addEvent(event)
                     eventRepo.addEventRelay(event.id, relayUrl)
-                    val zapperPubkey = Nip57.getZapperPubkey(event)
+                    val zapperPubkey = eventRepo.resolveZapSender(event).first
                     if (zapperPubkey != null && eventRepo.getProfileData(zapperPubkey) == null) {
                         metadataFetcher.addToPendingProfiles(zapperPubkey)
                     }
@@ -389,7 +389,6 @@ class EventRouter(
                     val urls = Nip51.parseRelaySet(event)
                     keyRepo.saveDmRelays(urls)
                     relayPool.updateDmRelays(urls)
-                    eventRepo.dmRelayUrls = urls.toSet()
                 }
             }
             if (event.kind == Nip51.KIND_SEARCH_RELAYS) {
@@ -609,8 +608,17 @@ class EventRouter(
             null
         } ?: return
 
-        // Private DM reaction — associate with the target message, not a new conversation entry
+        // Private reaction (kind 7 rumor). The "k" tag carries the kind of the message
+        // being reacted to: k=1 → reaction on a NIP-17 private reply, route through the
+        // note repository so thread/notification rendering picks it up the same way as
+        // public reactions; k=14 (or absent for back-compat) → DM reaction, route into
+        // the DM conversation entry.
         if (Nip17.isReaction(rumor)) {
+            val kTag = rumor.tags.firstOrNull { it.size >= 2 && it[0] == "k" }?.get(1)
+            if (kTag == "1") {
+                handlePrivateReplyReaction(rumor, myPubkey)
+                return
+            }
             val targetId = rumor.tags.firstOrNull { it.size >= 2 && it[0] == "e" }?.get(1) ?: return
             val participants = Nip17.getConversationParticipants(rumor, myPubkey)
             if (participants.any { muteRepo.isBlocked(it) }) return
@@ -620,6 +628,13 @@ class EventRouter(
                 Nip30.parseEmojiTags(rumor.tags)[emojiContent.removeSurrounding(":")]
             } else null
             dmRepo.addReaction(convKey, targetId, DmReaction(rumor.pubkey, emojiContent, rumor.createdAt, emojiUrl))
+            return
+        }
+
+        // NIP-17 private reply — kind 1 rumor with NIP-10 reply tags.
+        // Surface as a normal reply in threads + notifications, flagged as private.
+        if (rumor.kind == 1) {
+            handlePrivateReply(event, rumor, myPubkey)
             return
         }
 
@@ -649,5 +664,27 @@ class EventRouter(
             debugRumorJson = Nip17.rumorToJson(rumor)
         )
         dmRepo.addMessage(msg, convKey)
+    }
+
+    private fun handlePrivateReplyReaction(rumor: Nip17.Rumor, myPubkey: String) {
+        com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReaction(
+            rumor = rumor,
+            myPubkey = myPubkey,
+            eventRepo = eventRepo,
+            notifRepo = notifRepo,
+            muteRepo = muteRepo,
+            onMissingProfile = { metadataFetcher.addToPendingProfiles(it) }
+        )
+    }
+
+    private fun handlePrivateReply(wrap: NostrEvent, rumor: Nip17.Rumor, myPubkey: String) {
+        com.darkwisp.app.repo.PrivateRumorHandler.handlePrivateReply(
+            rumor = rumor,
+            myPubkey = myPubkey,
+            eventRepo = eventRepo,
+            notifRepo = notifRepo,
+            muteRepo = muteRepo,
+            onMissingProfile = { metadataFetcher.addToPendingProfiles(it) }
+        )
     }
 }

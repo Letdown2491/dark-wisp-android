@@ -358,12 +358,20 @@ fun WispNavHost(
 
     // Initialize compose viewmodel with shared repos
     LaunchedEffect(Unit) {
-        composeViewModel.init(feedViewModel.profileRepo, feedViewModel.contactRepo, feedViewModel.relayPool, feedViewModel.eventRepo, feedViewModel.eventPersistence)
+        composeViewModel.init(
+            feedViewModel.profileRepo,
+            feedViewModel.contactRepo,
+            feedViewModel.relayPool,
+            feedViewModel.eventRepo,
+            feedViewModel.eventPersistence,
+            feedViewModel.dmRepo,
+            feedViewModel.relayListRepo
+        )
     }
 
     // Initialize DM list viewmodel with shared repo
     LaunchedEffect(Unit) {
-        dmListViewModel.init(feedViewModel.dmRepo, feedViewModel.muteRepo)
+        dmListViewModel.init(feedViewModel.dmRepo, feedViewModel.muteRepo, feedViewModel.eventRepo, feedViewModel.notifRepo)
     }
 
     // Initialize group list viewmodel with shared repo; key changes on account switch to re-init
@@ -1104,7 +1112,7 @@ fun WispNavHost(
                 zapSuccess = feedViewModel.zapSuccess,
                 zapError = feedViewModel.zapError,
                 zapInProgressIds = profileZapInProgress,
-                canPrivateZap = feedViewModel.relayPool.hasDmRelays() && feedViewModel.relayListRepo.hasDmRelays(pubkey),
+                canPrivateZap = feedViewModel.hasLocalKeypair && feedViewModel.relayPool.hasDmRelays() && feedViewModel.relayListRepo.hasDmRelays(pubkey),
                 fetchDmRelays = { pk -> feedViewModel.fetchDmRelaysIfMissing(pk) && feedViewModel.relayPool.hasDmRelays() },
                 ownLists = feedViewModel.listRepo.ownLists.collectAsState().value,
                 onAddToList = { dTag, pk -> feedViewModel.addToList(dTag, pk) },
@@ -1214,7 +1222,7 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = userHasDmRelays && recipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && userHasDmRelays && recipientHasDmRelays
                 )
             }
             SearchScreen(
@@ -1351,7 +1359,7 @@ fun WispNavHost(
                     powPreferences = feedViewModel.powPrefs,
                     myPubkeyHex = userPubkey
                 )
-                activeSigner?.let { dmConvoViewModel.decryptPending(it, feedViewModel.muteRepo) }
+                activeSigner?.let { dmConvoViewModel.decryptPending(it, feedViewModel.muteRepo, feedViewModel.eventRepo, feedViewModel.notifRepo) }
             }
             val peerProfile = feedViewModel.eventRepo.getProfileData(pubkey)
             val userProfile = userPubkey?.let { feedViewModel.eventRepo.getProfileData(it) }
@@ -1434,7 +1442,7 @@ fun WispNavHost(
                     myPubkeyHex = userPubkey,
                     participantPubkeys = participantList
                 )
-                activeSigner?.let { dmConvoViewModel.decryptPending(it, feedViewModel.muteRepo) }
+                activeSigner?.let { dmConvoViewModel.decryptPending(it, feedViewModel.muteRepo, feedViewModel.eventRepo, feedViewModel.notifRepo) }
                 for (pubkey in participantList) {
                     feedViewModel.metadataFetcher.queueProfileFetch(pubkey)
                 }
@@ -1582,7 +1590,7 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.relayPool.hasDmRelays() && recipientHasDmRelays,
+                    canPrivateZap = feedViewModel.hasLocalKeypair && feedViewModel.relayPool.hasDmRelays() && recipientHasDmRelays,
                     initialSatsHint = groupRoomZapInitialSats
                 )
             }
@@ -1859,7 +1867,8 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = threadUserHasDmRelays && threadRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && threadUserHasDmRelays && threadRecipientHasDmRelays,
+                    forcePrivate = threadZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true
                 )
             }
             val threadSetListedIds by feedViewModel.bookmarkSetRepo.allListedEventIds.collectAsState()
@@ -1951,6 +1960,11 @@ fun WispNavHost(
                 isEmojiSetAdded = { pubkey, dTag ->
                     val ref = com.darkwisp.app.nostr.Nip30.buildSetReference(pubkey, dTag)
                     feedViewModel.customEmojiRepo.userEmojiList.value?.setReferences?.contains(ref) ?: false
+                },
+                canPrivateZapFor = { event ->
+                    feedViewModel.hasLocalKeypair &&
+                        feedViewModel.relayPool.hasDmRelays() &&
+                        feedViewModel.relayListRepo.hasDmRelays(event.pubkey)
                 }
             )
 
@@ -2023,7 +2037,7 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = hashtagUserHasDmRelays && hashtagRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && hashtagUserHasDmRelays && hashtagRecipientHasDmRelays
                 )
             }
 
@@ -2174,7 +2188,7 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = setFeedUserHasDmRelays && setFeedRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && setFeedUserHasDmRelays && setFeedRecipientHasDmRelays
                 )
             }
 
@@ -2338,7 +2352,7 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = articleUserHasDmRelays && articleRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && articleUserHasDmRelays && articleRecipientHasDmRelays
                 )
             }
 
@@ -2542,7 +2556,10 @@ fun WispNavHost(
                             eventATag = aTag)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.relayPool.hasDmRelays() && recipientHasDmRelays
+                    // DIP-03 needs a concrete note id for the ephemeral key
+                    // derivation; live-stream zaps target an addressable event
+                    // (a-tag) instead, so private zaps don't apply here.
+                    canPrivateZap = false
                 )
             }
             val streamActivityEventId = remember(hostPubkey, dTag) {
@@ -3099,7 +3116,8 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = notifUserHasDmRelays && notifRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && notifUserHasDmRelays && notifRecipientHasDmRelays,
+                    forcePrivate = notifZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true
                 )
             }
 
@@ -3148,6 +3166,24 @@ fun WispNavHost(
                         val tags = com.darkwisp.app.nostr.Nip10.buildReplyTags(replyToEvent, hint) +
                             com.darkwisp.app.nostr.Nip30.buildEmojiTagsForContent(content, notifResolvedEmojis) +
                             if (notifInterfacePrefs.isClientTagEnabled()) listOf(listOf("client", "Dark Wisp")) else emptyList()
+
+                        // If the parent is a private reply we received, keep the thread encrypted
+                        // by gift-wrapping this reply too. Otherwise fall through to the public path.
+                        if (feedViewModel.eventRepo.isPrivate(replyToEvent.id)) {
+                            val difficulty = if (feedViewModel.powPrefs.isNotePowEnabled()) feedViewModel.powPrefs.getNoteDifficulty() else 0
+                            com.darkwisp.app.repo.PrivateReplyPublisher.send(
+                                signer = signer,
+                                relayPool = feedViewModel.relayPool,
+                                dmRepo = feedViewModel.dmRepo,
+                                relayListRepo = feedViewModel.relayListRepo,
+                                eventRepo = feedViewModel.eventRepo,
+                                replyTo = replyToEvent,
+                                content = content,
+                                baseTags = tags,
+                                targetDifficulty = difficulty
+                            )
+                            return@launch
+                        }
 
                         if (feedViewModel.powPrefs.isNotePowEnabled()) {
                             feedViewModel.powManager.submitNote(
