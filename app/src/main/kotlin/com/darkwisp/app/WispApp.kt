@@ -50,7 +50,13 @@ class WispApp : Application(), SingletonImageLoader.Factory {
     // Sideloaded installs get no install-time AOT from the store, so surface whether the
     // bundled baseline profile was actually compiled (adb logcat -s ProfileVerifier)
     private fun reportBaselineProfileStatus() {
-        Executors.newSingleThreadExecutor().execute {
+        // Daemon thread, shut down after the one-shot check so it doesn't linger for
+        // the app's lifetime (thread creation/teardown is costlier under GrapheneOS
+        // exec-based spawning).
+        val executor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "baseline-profile-check").apply { isDaemon = true }
+        }
+        executor.execute {
             try {
                 val status = ProfileVerifier.getCompilationStatusAsync().get(20, TimeUnit.SECONDS)
                 val msg = "compiledWithProfile=${status.isCompiledWithProfile} " +
@@ -62,6 +68,7 @@ class WispApp : Application(), SingletonImageLoader.Factory {
                 Log.w("ProfileVerifier", "status check failed: ${e.message}")
             }
         }
+        executor.shutdown()
     }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {

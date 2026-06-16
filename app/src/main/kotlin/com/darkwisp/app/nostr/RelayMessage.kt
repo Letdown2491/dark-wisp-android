@@ -3,6 +3,7 @@ package com.darkwisp.app.nostr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 sealed class RelayMessage {
@@ -26,7 +27,7 @@ sealed class RelayMessage {
                         val event = if (eventObj is JsonArray) {
                             NostrEvent.fromJsonArray(eventObj)
                         } else {
-                            json.decodeFromJsonElement(NostrEvent.serializer(), eventObj)
+                            NostrEvent.fromJsonObject(eventObj.jsonObject)
                         }
                         EventMsg(subId, event)
                     }

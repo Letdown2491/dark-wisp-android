@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -191,6 +192,39 @@ class RelayPool(private val prefs: SharedPreferences? = null) {
     /** Event IDs that failed async signature verification and should be removed from UI. */
     private val _invalidEvents = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val invalidEvents: SharedFlow<String> = _invalidEvents
+
+    /**
+     * Signature verification runs on a small fixed worker pool fed by this channel
+     * instead of launching a coroutine per event. On a busy feed that previously
+     * meant thousands of coroutine + closure allocations/sec on the hottest path
+     * (extra costly under GrapheneOS hardened_malloc). The channel carries the same
+     * [RelayEvent] instance already built for [_relayEvents], so there's no extra
+     * per-event allocation. Verification is never skipped: if the bounded buffer is
+     * momentarily full we fall back to an inline launch (see [enqueueVerify]).
+     */
+    private val verifyChannel = Channel<RelayEvent>(capacity = 512)
+
+    init {
+        val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        repeat(workers) {
+            scope.launch(Dispatchers.Default) {
+                for (relayEvent in verifyChannel) verifyEvent(relayEvent)
+            }
+        }
+    }
+
+    private fun enqueueVerify(relayEvent: RelayEvent) {
+        if (verifyChannel.trySend(relayEvent).isFailure) {
+            scope.launch(Dispatchers.Default) { verifyEvent(relayEvent) }
+        }
+    }
+
+    private fun verifyEvent(relayEvent: RelayEvent) {
+        if (!relayEvent.event.verifySignature()) {
+            Log.w("RelayPool", "Invalid signature: id=${relayEvent.event.id.take(12)} kind=${relayEvent.event.kind} relay=${relayEvent.relayUrl}")
+            _invalidEvents.tryEmit(relayEvent.event.id)
+        }
+    }
 
     /** Emitted when a relay sends CLOSED for a group subscription (subId starts with "grp-"). */
     val groupRelayErrors = MutableSharedFlow<Triple<String, String, String>>(
@@ -399,18 +433,15 @@ class RelayPool(private val prefs: SharedPreferences? = null) {
                             }
                         }
                         if (shouldEmit) {
-                            // Verify signature off the hot path — retract if invalid
-                            scope.launch(Dispatchers.Default) {
-                                if (!msg.event.verifySignature()) {
-                                    Log.w("RelayPool", "Invalid signature: id=${msg.event.id.take(12)} kind=${msg.event.kind} relay=${relay.config.url}")
-                                    _invalidEvents.tryEmit(msg.event.id)
-                                }
-                            }
+                            val relayEvent = RelayEvent(msg.event, relay.config.url, msg.subscriptionId)
+                            // Verify signature off the hot path via the worker pool — retract if
+                            // invalid. Reuses relayEvent so there's no extra per-event allocation.
+                            enqueueVerify(relayEvent)
                             if (msg.event.kind == 1018) {
                                 Log.d("POLL", "[Pool] emit kind 1018 id=${msg.event.id.take(12)} sub=${msg.subscriptionId} relay=${relay.config.url}")
                             }
                             _events.tryEmit(msg.event)
-                            _relayEvents.tryEmit(RelayEvent(msg.event, relay.config.url, msg.subscriptionId))
+                            _relayEvents.tryEmit(relayEvent)
                             // Forward to local relay (fire-and-forget)
                             if (localRelay != null && relay !== localRelay && shouldForwardToLocalRelay(msg.event)) {
                                 localRelay?.send(ClientMessage.event(msg.event))
