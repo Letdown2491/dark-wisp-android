@@ -475,6 +475,7 @@ fun WispDrawerContent(
                 pubkeyHex = pubkey,
                 avatarUrl = profile?.picture,
                 lud16 = profile?.lud16,
+                clinkOffer = profile?.clinkOffer,
                 onNavigate = { route ->
                     showProfileQr = false
                     onScanResult(route)
