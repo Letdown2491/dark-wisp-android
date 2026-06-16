@@ -19,6 +19,7 @@ import com.darkwisp.app.repo.TorPreferences
 import com.darkwisp.app.repo.ZapSender
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import okhttp3.Call
@@ -43,7 +44,12 @@ class WispApp : Application(), SingletonImageLoader.Factory {
         }
         WispObjectBox.init(this)
         ZapSender.init(this)
-        ExchangeRateRepository.init(this)
+        // Exchange-rate init does disk I/O (loadCached) + kicks off a network refresh;
+        // keep it off the main thread so it doesn't gate first frame. Rates populate
+        // asynchronously regardless, and consumers already handle the empty initial map.
+        MainScope().launch(Dispatchers.IO) {
+            ExchangeRateRepository.init(applicationContext)
+        }
         reportBaselineProfileStatus()
     }
 
