@@ -36,6 +36,11 @@ class InterfacePreferences(context: Context) {
     fun isVideoAutoPlay(): Boolean = prefs.getBoolean("video_auto_play", true)
     fun setVideoAutoPlay(enabled: Boolean) = prefs.edit().putBoolean("video_auto_play", enabled).apply()
 
+    fun getMediaLayoutStyle(): MediaLayoutStyle =
+        MediaLayoutStyle.fromKey(prefs.getString("media_layout_style", null))
+    fun setMediaLayoutStyle(style: MediaLayoutStyle) =
+        prefs.edit().putString("media_layout_style", style.key).apply()
+
     fun getLanguage(): String = prefs.getString("language", "system") ?: "system"
     fun setLanguage(language: String) = prefs.edit().putString("language", language).apply()
 
@@ -143,6 +148,7 @@ class InterfacePreferences(context: Context) {
             .remove("post_undo_timer_enabled")
             .remove("post_undo_timer_seconds")
             .remove("post_undo_timer_for_replies")
+            .remove("media_layout_style")
             .apply()
     }
 }

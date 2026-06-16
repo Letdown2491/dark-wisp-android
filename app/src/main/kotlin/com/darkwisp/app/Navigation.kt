@@ -97,6 +97,7 @@ import com.darkwisp.app.ui.component.FloatingVideoPlayer
 import com.darkwisp.app.ui.component.PipController
 import com.darkwisp.app.ui.component.FullScreenVideoPlayer
 import com.darkwisp.app.ui.component.FullScreenVideoState
+import com.darkwisp.app.ui.component.NsecPasteWarningOverlay
 import com.darkwisp.app.ui.screen.OnboardingSuggestionsScreen
 import com.darkwisp.app.ui.screen.OnboardingTopicsScreen
 import com.darkwisp.app.ui.screen.OnboardingFirstPostScreen
@@ -242,13 +243,24 @@ fun WispNavHost(
 
     relayViewModel.relayPool = feedViewModel.relayPool
 
+    // On process death during anon mode, the ephemeral keypair is gone.
+    // Clear the stale anon session flag so the app starts normally.
+    LaunchedEffect(Unit) {
+        if (feedViewModel.keyRepo.getAnonSessionPubkey() != null) {
+            feedViewModel.keyRepo.clearAnonSession()
+        }
+    }
+
     // Unified signer — handles both LOCAL (nsec) and REMOTE (NIP-55) modes
-    // Reactive: recomposes on login, logout, and account switch
+    // Reactive: recomposes on login, logout, account switch, and anon mode toggle
     val context = LocalContext.current
     val signingMode by authViewModel.signingModeFlow.collectAsState()
     val npub by authViewModel.npub.collectAsState()
-    val activeSigner = remember(signingMode, npub) {
-        when (signingMode) {
+    val anonMode by feedViewModel.anonMode.collectAsState()
+    val activeSigner = remember(signingMode, npub, anonMode) {
+        if (anonMode != null) {
+            LocalSigner(anonMode!!.keypair.privkey, anonMode!!.keypair.pubkey)
+        } else when (signingMode) {
             SigningMode.REMOTE -> {
                 val pubkey = authViewModel.keyRepo.getPubkeyHex() ?: ""
                 val pkg = authViewModel.keyRepo.getSignerPackage() ?: ""
@@ -298,6 +310,7 @@ fun WispNavHost(
     var groupListInitKey by rememberSaveable { mutableStateOf(0) }
 
     val onSwitchAccount: (String) -> Unit = { pubkeyHex ->
+        if (anonMode != null) feedViewModel.exitAnonMode()
         feedViewModel.clearSigner()
         feedViewModel.resetForAccountSwitch()
         walletViewModel.suspendForAccountSwitch()  // disconnect only, preserve credentials
@@ -316,10 +329,28 @@ fun WispNavHost(
     }
 
     val onAddAccount: () -> Unit = {
+        if (anonMode != null) feedViewModel.exitAnonMode()
         authViewModel.isAddingAccount = true
         feedViewModel.resetForAccountSwitch()
         walletViewModel.suspendForAccountSwitch()  // disconnect only, preserve credentials
         navController.navigate(Routes.SPLASH) {
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
+    val onEnterAnonMode: () -> Unit = {
+        feedViewModel.enterAnonMode()
+        feedViewModel.resetForAnonSwitch()
+        navController.navigate(Routes.LOADING) {
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
+    val onExitAnonMode: () -> Unit = {
+        feedViewModel.exitAnonMode()
+        feedViewModel.resetForAccountSwitch()
+        feedViewModel.reloadForNewAccount()
+        navController.navigate(Routes.LOADING) {
             popUpTo(0) { inclusive = true }
         }
     }
@@ -629,6 +660,7 @@ fun WispNavHost(
                         isZapAnimating = isZapAnimating,
                         isReplyAnimating = isReplyAnimating,
                         notifSoundEnabled = notifSoundEnabled,
+                        hiddenTabs = if (anonMode != null) setOf(BottomTab.WALLET) else emptySet(),
                         onTabSelected = { tab ->
                             if (currentRoute == tab.route) {
                                 scrollToTopTrigger++
@@ -816,6 +848,8 @@ fun WispNavHost(
                 onScanResult = { route ->
                     navController.navigate(route)
                 },
+                onEnterAnonMode = onEnterAnonMode,
+                onExitAnonMode = onExitAnonMode,
                 accounts = accounts,
                 onSwitchAccount = onSwitchAccount,
                 onAddAccount = onAddAccount,
@@ -1254,6 +1288,7 @@ fun WispNavHost(
             SearchScreen(
                 viewModel = searchViewModel,
                 relayPool = feedViewModel.relayPool,
+                onPayInvoice = { bolt11 -> feedViewModel.payInvoice(bolt11) },
                 eventRepo = feedViewModel.eventRepo,
                 muteRepo = feedViewModel.muteRepo,
                 contactRepo = feedViewModel.contactRepo,
@@ -1422,6 +1457,7 @@ fun WispNavHost(
                 noteActions = remember {
                     com.darkwisp.app.ui.component.NoteActions(
                         nip05Repo = feedViewModel.nip05Repo,
+                        onPayInvoice = { bolt11 -> feedViewModel.payInvoice(bolt11) },
                         onAddEmojiSet = { pk, dTag -> feedViewModel.addSetToEmojiList(pk, dTag) },
                         onRemoveEmojiSet = { pk, dTag -> feedViewModel.removeSetFromEmojiList(pk, dTag) },
                         isEmojiSetAdded = { pk, dTag ->
@@ -1511,6 +1547,7 @@ fun WispNavHost(
                 noteActions = remember {
                     com.darkwisp.app.ui.component.NoteActions(
                         nip05Repo = feedViewModel.nip05Repo,
+                        onPayInvoice = { bolt11 -> feedViewModel.payInvoice(bolt11) },
                         onAddEmojiSet = { pk, dTag -> feedViewModel.addSetToEmojiList(pk, dTag) },
                         onRemoveEmojiSet = { pk, dTag -> feedViewModel.removeSetFromEmojiList(pk, dTag) },
                         isEmojiSetAdded = { pk, dTag ->
@@ -1751,6 +1788,7 @@ fun WispNavHost(
                 noteActions = remember {
                     com.darkwisp.app.ui.component.NoteActions(
                         nip05Repo = feedViewModel.nip05Repo,
+                        onPayInvoice = { bolt11 -> feedViewModel.payInvoice(bolt11) },
                         onNoteClick = { eventId -> navController.navigate("thread/$eventId") },
                         onAddEmojiSet = { pk, dTag -> feedViewModel.addSetToEmojiList(pk, dTag) },
                         onRemoveEmojiSet = { pk, dTag -> feedViewModel.removeSetFromEmojiList(pk, dTag) },
@@ -3507,6 +3545,7 @@ fun WispNavHost(
             .align(Alignment.BottomCenter)
             .padding(bottom = 16.dp)
     )
+    NsecPasteWarningOverlay()
     } // Box
 
     } // Scaffold

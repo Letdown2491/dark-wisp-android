@@ -269,7 +269,7 @@ fun ComposeScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -1219,7 +1219,7 @@ fun ComposeScreen(
                                 resolvedEmojis = resolvedEmojis
                             )
                         },
-                        enabled = !publishing && !isMiningBusy,
+                        enabled = !publishing && !isMiningBusy && (content.text.isNotBlank() || uploadedUrls.isNotEmpty()),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
