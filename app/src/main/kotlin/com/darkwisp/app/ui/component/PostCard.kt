@@ -123,6 +123,7 @@ fun PostCard(
     hasUserReposted: Boolean = false,
     repostCount: Int = 0,
     onZap: () -> Unit = {},
+    onZapLongPress: (() -> Unit)? = null,
     onZapDisabledTap: () -> Unit = {},
     zapEnabled: Boolean = true,
     hasUserZapped: Boolean = false,
@@ -794,6 +795,9 @@ fun PostCard(
                 hasUserReposted = hasUserReposted,
                 repostCount = repostCount,
                 onZap = onZap,
+                // Self-zap short-circuit: long-press also disabled
+                // when zapEnabled is false. iOS does the same.
+                onZapLongPress = onZapLongPress,
                 hasUserZapped = hasUserZapped,
                 onAddToList = onAddToList,
                 isInList = isInList,
@@ -807,7 +811,10 @@ fun PostCard(
                 unicodeEmojis = unicodeEmojis,
                 onOpenEmojiLibrary = onOpenEmojiLibrary,
                 isPrivate = isPrivate,
-                zapEnabled = zapEnabled,
+                // Self-zap disabled: render at low opacity, both tap
+                // and long-press become no-ops (the latter via
+                // `zapEnabled` short-circuit in ActionBar).
+                zapEnabled = zapEnabled && !isOwnEvent,
                 onZapDisabledTap = onZapDisabledTap,
                 modifier = Modifier.weight(1f)
             )
