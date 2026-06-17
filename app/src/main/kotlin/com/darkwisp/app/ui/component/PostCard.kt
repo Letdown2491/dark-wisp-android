@@ -123,6 +123,7 @@ fun PostCard(
     hasUserReposted: Boolean = false,
     repostCount: Int = 0,
     onZap: () -> Unit = {},
+    onZapLongPress: (() -> Unit)? = null,
     onZapDisabledTap: () -> Unit = {},
     zapEnabled: Boolean = true,
     hasUserZapped: Boolean = false,
@@ -217,8 +218,12 @@ fun PostCard(
     var expandedDetails by remember { mutableStateOf(false) }
     var showTranslation by remember { mutableStateOf(true) }
 
+    // Wrap content + divider so the divider can run full-width while the
+    // content keeps its 16dp horizontal padding. Tap-to-open lives on the
+    // content Column so the (tiny) divider area isn't tappable.
+    Column(modifier = modifier.fillMaxWidth()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onNoteClick)
             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -790,6 +795,9 @@ fun PostCard(
                 hasUserReposted = hasUserReposted,
                 repostCount = repostCount,
                 onZap = onZap,
+                // Self-zap short-circuit: long-press also disabled
+                // when zapEnabled is false. iOS does the same.
+                onZapLongPress = onZapLongPress,
                 hasUserZapped = hasUserZapped,
                 onAddToList = onAddToList,
                 isInList = isInList,
@@ -803,7 +811,10 @@ fun PostCard(
                 unicodeEmojis = unicodeEmojis,
                 onOpenEmojiLibrary = onOpenEmojiLibrary,
                 isPrivate = isPrivate,
-                zapEnabled = zapEnabled,
+                // Self-zap disabled: render at low opacity, both tap
+                // and long-press become no-ops (the latter via
+                // `zapEnabled` short-circuit in ActionBar).
+                zapEnabled = zapEnabled && !isOwnEvent,
                 onZapDisabledTap = onZapDisabledTap,
                 modifier = Modifier.weight(1f)
             )
@@ -846,9 +857,13 @@ fun PostCard(
                 }
             }
         }
-        if (showDivider) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 0.5.dp)
-        }
+    }
+    if (showDivider) {
+        // Full-bleed inter-post separator — sits outside the content
+        // Column's 16dp horizontal padding so it spans edge to edge,
+        // matching the iOS feed.
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 0.5.dp)
+    }
     }
 }
 
@@ -1223,11 +1238,14 @@ internal fun TopZapperBanner(
                 color = orange
             )
 
-            // Message (if present)
+            // Message (if present) — image URLs collapse to "[image]"
+            // since the banner only has room for a single line and a
+            // dumped URL crowds out the sats amount. Full image renders
+            // inline in the engagement drawer below.
             if (message.isNotBlank()) {
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = message,
+                    text = com.darkwisp.app.ui.util.ZapMessageImage.previewText(message),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     maxLines = 1,

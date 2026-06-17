@@ -123,6 +123,7 @@ fun DmConversationScreen(
     socialActionManager: SocialActionManager? = null,
     isWalletConnected: Boolean = false,
     onGoToWallet: () -> Unit = {},
+    zapPrefs: com.darkwisp.app.repo.ZapPreferences,
     noteActions: com.darkwisp.app.ui.component.NoteActions? = null,
     resolvedEmojis: Map<String, String> = emptyMap(),
     unicodeEmojis: List<String> = emptyList(),
@@ -279,7 +280,7 @@ fun DmConversationScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = MaterialTheme.colorScheme.background
                     )
                 )
 
@@ -635,10 +636,12 @@ fun DmConversationScreen(
                 zapTargetMessage = null
                 onGoToWallet()
             },
+            zapPrefsRepo = zapPrefs,
             recipientPubkey = zapTargetMessage?.senderPubkey,
             recipientHasLud16 = zapTargetMessage?.senderPubkey
                 ?.let { pk -> eventRepo?.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() } } ?: true,
-            fetchPaymentTargets = fetchPaymentTargets
+            fetchPaymentTargets = fetchPaymentTargets,
+            profileLookup = { pk -> peerProfile?.takeIf { it.pubkey == pk } }
         )
     }
 }

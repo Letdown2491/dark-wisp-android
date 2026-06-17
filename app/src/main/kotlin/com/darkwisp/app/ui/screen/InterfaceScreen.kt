@@ -3,6 +3,9 @@ package com.darkwisp.app.ui.screen
 import android.app.Activity
 import android.app.Application
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.animation.AnimatedVisibility
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -99,6 +103,7 @@ fun InterfaceScreen(
     var clientTagEnabled by remember { mutableStateOf(interfacePrefs.isClientTagEnabled()) }
     var autoLoadMedia by remember { mutableStateOf(interfacePrefs.isAutoLoadMedia()) }
     var videoAutoPlay by remember { mutableStateOf(interfacePrefs.isVideoAutoPlay()) }
+    var mediaLayout by remember { mutableStateOf(interfacePrefs.getMediaLayoutStyle()) }
     var liveStreamsHidden by remember { mutableStateOf(interfacePrefs.isLiveStreamsHidden()) }
     var selectedTheme by remember { mutableStateOf(interfacePrefs.getTheme()) }
     var isCustomTheme by remember { mutableStateOf(selectedTheme == "custom") }
@@ -130,7 +135,7 @@ fun InterfaceScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -139,6 +144,7 @@ fun InterfaceScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
@@ -461,6 +467,38 @@ fun InterfaceScreen(
                 )
             }
             Spacer(Modifier.height(12.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.settings_media_layout), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.settings_media_layout_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                val mediaLayoutOptions = listOf(
+                    InterfacePreferences.MediaLayoutStyle.GALLERY to R.string.settings_media_layout_gallery,
+                    InterfacePreferences.MediaLayoutStyle.STACK to R.string.settings_media_layout_stack
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    mediaLayoutOptions.forEachIndexed { index, (style, labelRes) ->
+                        SegmentedButton(
+                            selected = mediaLayout == style,
+                            onClick = {
+                                mediaLayout = style
+                                interfacePrefs.setMediaLayoutStyle(style)
+                                onChanged()
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = mediaLayoutOptions.size
+                            )
+                        ) {
+                            Text(stringResource(labelRes))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -683,6 +721,107 @@ fun InterfaceScreen(
                         Text(stringResource(R.string.fiat_settings_refresh))
                     }
                 }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Instant zaps / Instant payments ─────────────────────────────
+            // Hold-to-zap on the post-card fires the configured amount
+            // immediately when enabled; tap still opens the composer.
+            var quickZapEnabled by remember { mutableStateOf(interfacePrefs.isQuickZapEnabled()) }
+            var quickZapSats by remember { mutableStateOf(interfacePrefs.getQuickZapAmountSats().toString()) }
+            var quickZapFiat by remember { mutableStateOf(interfacePrefs.getQuickZapAmountFiat().toString()) }
+            var quickZapMessage by remember { mutableStateOf(interfacePrefs.getQuickZapMessage()) }
+
+            Text(
+                if (fiatModeEnabled) "Payments" else "Zaps",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (fiatModeEnabled) "Instant payments" else "Instant zaps",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        if (fiatModeEnabled)
+                            "Hold a post's pay button to send the configured amount instantly. Tap still opens the composer."
+                        else
+                            "Hold a post's zap bolt to send the configured amount instantly. Tap still opens the composer.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    Switch(
+                        checked = quickZapEnabled,
+                        onCheckedChange = {
+                            quickZapEnabled = it
+                            interfacePrefs.setQuickZapEnabled(it)
+                        },
+                        colors = wispSwitchColors()
+                    )
+                }
+            }
+
+            if (quickZapEnabled) {
+                Spacer(Modifier.height(12.dp))
+                if (fiatModeEnabled) {
+                    OutlinedTextField(
+                        value = quickZapFiat,
+                        onValueChange = { raw ->
+                            // Allow only digits + a single dot. Trim leading zeros.
+                            val cleaned = raw.filter { it.isDigit() || it == '.' }
+                                .let { s ->
+                                    val firstDot = s.indexOf('.')
+                                    if (firstDot < 0) s
+                                    else s.substring(0, firstDot + 1) +
+                                        s.substring(firstDot + 1).filter { it != '.' }
+                                }
+                            quickZapFiat = cleaned
+                            cleaned.toDoubleOrNull()?.let {
+                                interfacePrefs.setQuickZapAmountFiat(it)
+                            }
+                        },
+                        label = { Text("Amount (${fiatCurrency})") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = quickZapSats,
+                        onValueChange = { raw ->
+                            val digits = raw.filter { it.isDigit() }.trimStart('0').ifEmpty { "" }
+                            quickZapSats = digits
+                            // Hard cap at QUICK_ZAP_MAX_SATS so instant zaps
+                            // never bypass the soft-confirmation dialog.
+                            val parsed = digits.toLongOrNull()?.coerceIn(1L, InterfacePreferences.QUICK_ZAP_MAX_SATS)
+                            if (parsed != null) interfacePrefs.setQuickZapAmountSats(parsed)
+                        },
+                        label = { Text("Amount (sats)") },
+                        supportingText = { Text("Max ${InterfacePreferences.QUICK_ZAP_MAX_SATS}") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = quickZapMessage,
+                    onValueChange = {
+                        quickZapMessage = it
+                        interfacePrefs.setQuickZapMessage(it)
+                    },
+                    label = { Text("Message (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             Spacer(Modifier.height(24.dp))

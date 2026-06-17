@@ -37,6 +37,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        com.darkwisp.app.ui.component.NsecPasteGuard.setActivity(this)
         enableEdgeToEdge()
         deepLinkUri.value = intent?.data?.toString()
         setContent {
@@ -49,7 +50,8 @@ class MainActivity : FragmentActivity() {
             var mediaSettings by remember {
                 mutableStateOf(MediaSettings(
                     autoLoadMedia = interfacePrefs.isAutoLoadMedia(),
-                    videoAutoPlay = interfacePrefs.isVideoAutoPlay()
+                    videoAutoPlay = interfacePrefs.isVideoAutoPlay(),
+                    mediaLayoutStyle = interfacePrefs.getMediaLayoutStyle()
                 ))
             }
 
@@ -93,7 +95,8 @@ class MainActivity : FragmentActivity() {
                             themeName = interfacePrefs.getTheme()
                             mediaSettings = MediaSettings(
                                 autoLoadMedia = interfacePrefs.isAutoLoadMedia(),
-                                videoAutoPlay = interfacePrefs.isVideoAutoPlay()
+                                videoAutoPlay = interfacePrefs.isVideoAutoPlay(),
+                                mediaLayoutStyle = interfacePrefs.getMediaLayoutStyle()
                             )
                         }
                     )

@@ -40,7 +40,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -73,6 +75,7 @@ fun ActionBar(
     onQuote: () -> Unit = {},
     hasUserReposted: Boolean = false,
     onZap: () -> Unit = {},
+    onZapLongPress: (() -> Unit)? = null,
     hasUserZapped: Boolean = false,
     onAddToList: () -> Unit = {},
     isInList: Boolean = false,
@@ -106,12 +109,16 @@ fun ActionBar(
                 modifier = Modifier.size(22.dp)
             )
         }
-        Text(
-            text = replyCount.toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
-        )
+        // Hide the count when zero — matches iOS minimalistic action bar
+        // where empty metrics drop entirely instead of showing "0".
+        if (replyCount > 0) {
+            Text(
+                text = replyCount.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
         // React + Zap are available on private replies as gift-wrapped/DIP-03 actions.
         // Repost / Quote stay hidden on private replies because those events would
         // publicly attach an e-tag pointing at the encrypted rumor id.
@@ -162,12 +169,14 @@ fun ActionBar(
                 )
             }
         }
-        Text(
-            text = likeCount.toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (userReactionEmojis.isNotEmpty()) WispThemeColors.zapColor else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
-        )
+        if (likeCount > 0) {
+            Text(
+                text = likeCount.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (userReactionEmojis.isNotEmpty()) WispThemeColors.zapColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
         if (!isPrivate) {
             Spacer(Modifier.width(8.dp))
             Box {
@@ -193,22 +202,57 @@ fun ActionBar(
                     )
                 }
             }
-            Text(
-                text = repostCount.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (hasUserReposted) WispThemeColors.repostColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
+            if (repostCount > 0) {
+                Text(
+                    text = repostCount.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (hasUserReposted) WispThemeColors.repostColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         Box {
             val zapClickable = !isZapInProgress
-            IconButton(
-                onClick = { if (zapEnabled) onZap() else onZapDisabledTap() },
-                enabled = zapClickable
+            // combinedClickable lets the zap glyph distinguish tap
+            // (open composer) from long-press (fire instant zap when
+            // enabled). Pin a fired-flag so the tap handler doesn't
+            // also fire when the long-press completes — Compose, like
+            // SwiftUI, fires both onClick AND onLongClick on release.
+            val longPressFired = remember { androidx.compose.runtime.mutableStateOf(false) }
+            val haptics = LocalHapticFeedback.current
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = androidx.compose.material3.ripple(bounded = false, radius = 24.dp),
+                        enabled = zapClickable,
+                        onClick = {
+                            if (longPressFired.value) {
+                                longPressFired.value = false
+                            } else if (zapEnabled) {
+                                onZap()
+                            } else {
+                                onZapDisabledTap()
+                            }
+                        },
+                        onLongClick = if (zapEnabled && onZapLongPress != null) {
+                            {
+                                longPressFired.value = true
+                                // Confirms the long-press registered before
+                                // the zap network round-trip kicks off, so
+                                // the user can lift their finger knowing
+                                // the instant zap is on the way.
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onZapLongPress()
+                            }
+                        } else null
+                    )
             ) {
                 val zapTint = when {
-                    !zapEnabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    !zapEnabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                     hasUserZapped -> WispThemeColors.zapColor
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
@@ -249,7 +293,7 @@ fun ActionBar(
                 )
             }
         }
-        if (!isZapInProgress) {
+        if (!isZapInProgress && zapSats > 0) {
             val context = LocalContext.current
             val fiatPrefs = remember { FiatPreferences.get(context) }
             fiatPrefs.fiatMode.collectAsState().value

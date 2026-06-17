@@ -98,6 +98,7 @@ fun SearchScreen(
     onRepost: (NostrEvent) -> Unit = {},
     onQuote: (NostrEvent) -> Unit = {},
     onZap: (NostrEvent) -> Unit = {},
+    onZapInstant: (NostrEvent) -> Unit = onZap,
     zapInProgress: Set<String> = emptySet(),
     zapAnimatingIds: Set<String> = emptySet(),
     onToggleFollow: (String) -> Unit = {},
@@ -113,7 +114,8 @@ fun SearchScreen(
     onAddEmojiSet: ((String, String) -> Unit)? = null,
     onRemoveEmojiSet: ((String, String) -> Unit)? = null,
     isEmojiSetAdded: ((String, String) -> Boolean)? = null,
-    nip05Repo: com.darkwisp.app.repo.Nip05Repository? = null
+    nip05Repo: com.darkwisp.app.repo.Nip05Repository? = null,
+    onPayInvoice: (suspend (String) -> Boolean)? = null
 ) {
     val query by viewModel.query.collectAsState()
     val filter by viewModel.filter.collectAsState()
@@ -145,6 +147,7 @@ fun SearchScreen(
             isEmojiSetAdded = isEmojiSetAdded,
             onPollVote = onPollVote,
             nip05Repo = nip05Repo,
+            onPayInvoice = onPayInvoice,
         )
     }
 
@@ -385,6 +388,7 @@ fun SearchScreen(
                                     onRepost = { onRepost(event) },
                                     onQuote = { onQuote(event) },
                                     onZap = { onZap(event) },
+                                    onZapInstant = { onZapInstant(event) },
                                     onFollowAuthor = { onToggleFollow(event.pubkey) },
                                     onBlockAuthor = { onBlockUser(event.pubkey) },
                                     onAddToList = { onAddToList(event.id) },
@@ -432,6 +436,7 @@ private fun SearchNoteItem(
     onRepost: () -> Unit,
     onQuote: () -> Unit = {},
     onZap: () -> Unit,
+    onZapInstant: () -> Unit = onZap,
     onFollowAuthor: () -> Unit,
     onBlockAuthor: () -> Unit,
     onAddToList: () -> Unit,
@@ -477,6 +482,7 @@ private fun SearchNoteItem(
         onRepost = onRepost,
         onQuote = onQuote,
         onZap = onZap,
+        onZapLongPress = onZapInstant,
         hasUserZapped = hasUserZapped,
         zapSats = zapSats,
         isZapAnimating = isZapAnimating,

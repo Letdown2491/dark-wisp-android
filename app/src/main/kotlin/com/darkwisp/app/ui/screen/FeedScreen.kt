@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.clickable
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -126,6 +129,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HowToVote
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -191,6 +195,8 @@ fun FeedScreen(
     fetchGroupPreview: (suspend (String, String) -> com.darkwisp.app.repo.GroupPreview?)? = null,
     scrollToTopTrigger: Int = 0,
     onScanResult: (String) -> Unit = {},
+    onEnterAnonMode: () -> Unit = {},
+    onExitAnonMode: () -> Unit = {},
 ) {
     val feed by viewModel.feed.collectAsState()
     val feedType by viewModel.feedType.collectAsState()
@@ -210,6 +216,7 @@ fun FeedScreen(
     val translationVersion by viewModel.translationRepo.version.collectAsState()
     val connectedCount by viewModel.relayPool.connectedCount.collectAsState()
     val liveNowStreams by viewModel.liveNowStreams.collectAsState()
+    val anonMode by viewModel.anonMode.collectAsState()
     val listState = rememberLazyListState()
 
     // Viewport-aware engagement: notify ViewModel of visible item range
@@ -327,6 +334,15 @@ fun FeedScreen(
             onRepost = onRepost,
             onQuote = onQuote,
             onZap = { event -> zapTargetEvent = event },
+            onZapInstant = { event ->
+                if (viewModel.interfacePrefs.isQuickZapEnabled()) {
+                    val sats = viewModel.interfacePrefs.getQuickZapAmountSats()
+                    val msg = viewModel.interfacePrefs.getQuickZapMessage()
+                    viewModel.sendZap(event, sats * 1000L, msg, false, false)
+                } else {
+                    zapTargetEvent = event
+                }
+            },
             onProfileClick = onProfileClick,
             onNoteClick = { eventId -> onQuotedNoteClick?.invoke(eventId) },
             onAddToList = onAddToList,
@@ -547,12 +563,15 @@ fun FeedScreen(
                 viewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
             },
             onGoToWallet = onWallet,
+            zapPrefsRepo = viewModel.zapPrefs,
             canPrivateZap = userHasDmRelays && recipientHasDmRelays,
-            recipientPubkey = zapRecipient,
+            recipientPubkey = zapTargetEvent?.pubkey,
             // Unknown profile -> assume zappable; the send path surfaces the error.
-            recipientHasLud16 = viewModel.eventRepo.getProfileData(zapRecipient)
-                ?.let { !it.lud16.isNullOrBlank() } ?: true,
-            fetchPaymentTargets = viewModel::fetchPaymentTargets
+            recipientHasLud16 = zapTargetEvent?.pubkey?.let { pk ->
+                viewModel.eventRepo.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() }
+            } ?: true,
+            fetchPaymentTargets = viewModel::fetchPaymentTargets,
+            profileLookup = { viewModel.profileRepo.get(it) }
         )
     }
 
@@ -580,7 +599,10 @@ fun FeedScreen(
                 zapPollTarget = null
                 viewModel.sendZapPollVote(pollEvent, optionIndex, amountMsats, message, isAnonymous)
             },
-            onGoToWallet = onWallet
+            onGoToWallet = onWallet,
+            zapPrefsRepo = viewModel.zapPrefs,
+            recipientPubkey = pollEvent.pubkey,
+            profileLookup = { viewModel.profileRepo.get(it) }
         )
     }
 
@@ -653,6 +675,55 @@ fun FeedScreen(
         )
     }
 
+    var showAnonTorDialog by remember { mutableStateOf(false) }
+
+    if (showAnonTorDialog) {
+        val torState by TorManager.state.collectAsState()
+        AlertDialog(
+            onDismissRequest = { showAnonTorDialog = false },
+            title = { Text("Enable Tor?") },
+            text = {
+                Text("Anon Mode works best with Tor. Route your anonymous traffic through the Tor network?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showAnonTorDialog = false
+                    if (torState is TorManager.State.Off || torState is TorManager.State.Error) {
+                        viewModel.setTorEnabled(true)
+                    }
+                    scope.launch { drawerState.close() }
+                    onEnterAnonMode()
+                }) {
+                    Text("Enable Tor")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showAnonTorDialog = false
+                    scope.launch { drawerState.close() }
+                    onEnterAnonMode()
+                }) {
+                    Text("No Thanks")
+                }
+            }
+        )
+    }
+
+    val handleEnterAnonMode: () -> Unit = {
+        val currentTorState = TorManager.state.value
+        if (currentTorState is TorManager.State.Off || currentTorState is TorManager.State.Error) {
+            showAnonTorDialog = true
+        } else {
+            scope.launch { drawerState.close() }
+            onEnterAnonMode()
+        }
+    }
+
+    val handleExitAnonMode: () -> Unit = {
+        scope.launch { drawerState.close() }
+        onExitAnonMode()
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -669,6 +740,10 @@ fun FeedScreen(
                 isDarkTheme = isDarkTheme,
                 onToggleTheme = onToggleTheme,
                 accounts = accounts,
+                anonModeActive = anonMode != null,
+                anonName = anonMode?.name,
+                onEnterAnonMode = handleEnterAnonMode,
+                onExitAnonMode = handleExitAnonMode,
                 onSwitchAccount = { pubkeyHex ->
                     scope.launch { drawerState.close() }
                     onSwitchAccount(pubkeyHex)
@@ -776,6 +851,15 @@ fun FeedScreen(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 CenterAlignedTopAppBar(
+                    // Compact: reserve the status-bar inset via
+                    // `windowInsetsPadding` (layout-time, no first-frame
+                    // snap) and clamp the content area to 48dp (was
+                    // Material's default 64dp). Disable the bar's
+                    // internal inset handling to avoid double-padding.
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .height(48.dp),
+                    windowInsets = WindowInsets(0),
                     title = {
                                 Box {
                                     Surface(
@@ -894,7 +978,7 @@ fun FeedScreen(
                                 }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = MaterialTheme.colorScheme.background
                     ),
                     navigationIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -915,7 +999,9 @@ fun FeedScreen(
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 val (icon, tint) = when (contentFilter) {
-                                    FeedContentFilter.ALL -> Icons.Outlined.Dashboard to MaterialTheme.colorScheme.onSurfaceVariant
+                                    // GridView = 2x2 of equal squares (matches iOS).
+                                    // Dashboard was 1 large + 3 small panels.
+                                    FeedContentFilter.ALL -> Icons.Outlined.GridView to MaterialTheme.colorScheme.onSurfaceVariant
                                     FeedContentFilter.TEXT_ONLY -> Icons.AutoMirrored.Outlined.Article to MaterialTheme.colorScheme.primary
                                     FeedContentFilter.GALLERY_ONLY -> Icons.Outlined.Photo to MaterialTheme.colorScheme.primary
                                     FeedContentFilter.POLLS_ONLY -> Icons.Outlined.HowToVote to MaterialTheme.colorScheme.primary
@@ -1174,6 +1260,40 @@ fun FeedScreen(
                             state = listState,
                             modifier = Modifier.fillMaxSize()
                         ) {
+                            if (anonMode != null) {
+                                item(key = "anon-banner", contentType = "anon-banner") {
+                                    val anonGreen = androidx.compose.ui.graphics.Color(0xFF00C853)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(anonGreen.copy(alpha = 0.12f))
+                                            .clickable { onExitAnonMode() }
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("🕶️", fontSize = MaterialTheme.typography.bodyLarge.fontSize)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Anon Mode",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = anonGreen
+                                            )
+                                            val anonName = anonMode?.name ?: ""
+                                            Text(
+                                                text = "Posting as $anonName — tap to exit",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        TextButton(onClick = {
+                                            onExitAnonMode()
+                                        }) {
+                                            Text("Exit", color = anonGreen)
+                                        }
+                                    }
+                                }
+                            }
                             if (liveNowStreams.isNotEmpty() && onLiveStreamClick != null && !viewModel.interfacePrefs.isLiveStreamsHidden()) {
                                 item(key = "live-now", contentType = "live-now") {
                                     com.darkwisp.app.ui.component.LiveNowRow(
@@ -1233,6 +1353,7 @@ fun FeedScreen(
                                     onRepost = { onRepost(event) },
                                     onQuote = { onQuote(event) },
                                     onZap = { zapTargetEvent = event },
+                                    onZapLongPress = { noteActions.onZapInstant(event) },
                                     onAddToList = { onAddToList(event.id) },
                                     onPin = { viewModel.togglePin(event.id) },
                                     onDelete = { viewModel.deleteEvent(event.id, event.kind) },
@@ -1334,6 +1455,7 @@ private fun FeedItem(
     onRepost: () -> Unit,
     onQuote: () -> Unit,
     onZap: () -> Unit,
+    onZapLongPress: (() -> Unit)? = null,
     onAddToList: () -> Unit = {},
     onPin: () -> Unit = {},
     onDelete: () -> Unit = {},
@@ -1477,6 +1599,7 @@ private fun FeedItem(
             hasUserReposted = hasUserReposted,
             repostCount = repostCount,
             onZap = onZap,
+            onZapLongPress = onZapLongPress,
             hasUserZapped = hasUserZapped,
             likeCount = likeCount,
             replyCount = replyCount,

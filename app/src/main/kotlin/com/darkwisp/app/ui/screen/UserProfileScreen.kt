@@ -23,8 +23,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.outlined.Lock
@@ -40,6 +45,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
+import androidx.compose.material.icons.outlined.Sell
 import com.darkwisp.app.nostr.Nip30
 import com.darkwisp.app.ui.component.Nip05Badge
 import com.darkwisp.app.ui.component.PaymentTargetSheet
@@ -90,6 +96,7 @@ import com.darkwisp.app.nostr.Nip69
 import com.darkwisp.app.nostr.NipA3
 import com.darkwisp.app.nostr.NostrEvent
 import com.darkwisp.app.nostr.ProfileData
+import com.darkwisp.app.nostr.toNpub
 import com.darkwisp.app.relay.RelayConfig
 import com.darkwisp.app.relay.RelayPool
 import com.darkwisp.app.repo.ContactRepository
@@ -149,6 +156,8 @@ fun UserProfileScreen(
     onQuotedNoteClick: ((String) -> Unit)? = null,
     onReact: (NostrEvent, String) -> Unit = { _, _ -> },
     onZap: (NostrEvent, Long, String, Boolean, Boolean) -> Unit = { _, _, _, _, _ -> },
+    onZapInstant: ((NostrEvent) -> Unit)? = null,
+    zapPrefs: com.darkwisp.app.repo.ZapPreferences,
     userPubkey: String? = null,
     isWalletConnected: Boolean = false,
     onWallet: () -> Unit = {},
@@ -283,11 +292,14 @@ fun UserProfileScreen(
                 onZap(event, amountMsats, message, isAnonymous, isPrivate)
             },
             onGoToWallet = onWallet,
+            zapPrefsRepo = zapPrefs,
             canPrivateZap = resolvedCanPrivateZap,
-            recipientPubkey = zapRecipient,
-            recipientHasLud16 = eventRepo?.getProfileData(zapRecipient)
-                ?.let { !it.lud16.isNullOrBlank() } ?: true,
-            fetchPaymentTargets = fetchPaymentTargets
+            recipientPubkey = zapTargetEvent?.pubkey,
+            recipientHasLud16 = zapTargetEvent?.pubkey?.let { pk ->
+                eventRepo?.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() }
+            } ?: true,
+            fetchPaymentTargets = fetchPaymentTargets,
+            profileLookup = { eventRepo?.getProfileData(it) }
         )
     }
 
@@ -301,10 +313,13 @@ fun UserProfileScreen(
                 onZapProfile?.invoke(amountMsats, message, isAnonymous)
             },
             onGoToWallet = onWallet,
+            zapPrefsRepo = zapPrefs,
             canPrivateZap = false,
-            recipientPubkey = profilePubkey.ifEmpty { null },
+            // Profile zap — recipient is the profile being viewed.
+            recipientPubkey = profile?.pubkey ?: profilePubkey.ifEmpty { null },
             recipientHasLud16 = profile?.let { !it.lud16.isNullOrBlank() } ?: true,
-            fetchPaymentTargets = fetchPaymentTargets
+            fetchPaymentTargets = fetchPaymentTargets,
+            profileLookup = { pk -> profile?.takeIf { it.pubkey == pk } }
         )
     }
 
@@ -354,11 +369,27 @@ fun UserProfileScreen(
     var showQrDialog by remember { mutableStateOf(false) }
     var showAddToListDialog by remember { mutableStateOf(false) }
 
+    // Decoded CLINK offer advertised on the profile, when present and valid.
+    val profileClinkOffer = remember(profile?.clinkOffer) {
+        profile?.clinkOffer?.let { com.darkwisp.app.nostr.Noffer.decodeOrNull(it) }
+    }
+    var showOfferPaySheet by remember { mutableStateOf(false) }
+
+    if (showOfferPaySheet && profileClinkOffer != null) {
+        com.darkwisp.app.ui.component.NofferPaySheet(
+            noffer = profileClinkOffer,
+            recipientProfile = profile,
+            onPayInvoice = onPayInvoice,
+            onDismiss = { showOfferPaySheet = false }
+        )
+    }
+
     if (showQrDialog) {
         ProfileQrSheet(
             pubkeyHex = profilePubkey,
             avatarUrl = profile?.picture,
             lud16 = profile?.lud16,
+            clinkOffer = profile?.clinkOffer,
             onDismiss = { showQrDialog = false }
         )
     }
@@ -509,7 +540,7 @@ fun UserProfileScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -572,19 +603,25 @@ fun UserProfileScreen(
                     onNavigateToProfile = onNavigateToProfile,
                     onSendDm = onSendDm,
                     onZapClick = if (onZapProfile != null) { { showProfileZapDialog = true } } else null,
+                    onPayOffer = if (profileClinkOffer != null) { { showOfferPaySheet = true } } else null,
                     followingCount = followList.size,
                     followedBy = followedBy,
                     followsYou = !isOwnProfile && userPubkey != null && followList.any { it.pubkey == userPubkey },
                     isBlocked = isBlocked,
+                    onMuteUser = onBlockUser,
+                    onUnmuteUser = onUnblockUser,
                     paymentTargets = paymentTargets,
                     onPaymentTargetClick = { paymentTargetSheetTarget = it }
                 )
             }
 
             stickyHeader {
+                // Tab strip uses `background` (true near-black) instead of
+                // `surface` so the chrome reads as part of the body and
+                // doesn't stack two distinct grey tiers — matches iOS.
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab,
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                     edgePadding = 16.dp
                 ) {
                     tabTitles.forEachIndexed { index, title ->
@@ -603,7 +640,7 @@ fun UserProfileScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
+                            .background(MaterialTheme.colorScheme.background)
                             .padding(vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -799,6 +836,7 @@ fun UserProfileScreen(
                                 userReactionEmojis = userEmojis,
                                 hasUserReposted = hasUserReposted,
                                 onZap = { zapTargetEvent = event },
+                                onZapLongPress = { onZapInstant?.invoke(event) ?: run { zapTargetEvent = event } },
                                 hasUserZapped = hasUserZapped,
                                 likeCount = likeCount,
                                 replyCount = replyCount,
@@ -983,6 +1021,7 @@ fun UserProfileScreen(
                                 userReactionEmojis = userEmojis,
                                 hasUserReposted = hasUserReposted2,
                                 onZap = { zapTargetEvent = event },
+                                onZapLongPress = { onZapInstant?.invoke(event) ?: run { zapTargetEvent = event } },
                                 hasUserZapped = hasUserZapped2,
                                 likeCount = likeCount,
                                 replyCount = replyCount,
@@ -1149,10 +1188,13 @@ private fun ProfileHeader(
     onNavigateToProfile: ((String) -> Unit)? = null,
     onSendDm: (() -> Unit)? = null,
     onZapClick: (() -> Unit)? = null,
+    onPayOffer: (() -> Unit)? = null,
     followingCount: Int = 0,
     followedBy: List<String> = emptyList(),
     followsYou: Boolean = false,
     isBlocked: Boolean = false,
+    onMuteUser: (() -> Unit)? = null,
+    onUnmuteUser: (() -> Unit)? = null,
     paymentTargets: List<NipA3.PaymentTarget> = emptyList(),
     onPaymentTargetClick: (NipA3.PaymentTarget) -> Unit = {}
 ) {
@@ -1236,10 +1278,51 @@ private fun ProfileHeader(
                             }
                         }
                     }
-                    FollowButton(
-                        isFollowing = isFollowing,
-                        onClick = onToggleFollow
-                    )
+                    if (onPayOffer != null) {
+                        Surface(
+                            onClick = onPayOffer,
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Sell,
+                                contentDescription = "Pay offer",
+                                tint = Color(0xFFFFC107),
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                    // Follow circle button
+                    Surface(
+                        onClick = onToggleFollow,
+                        shape = CircleShape,
+                        color = if (isFollowing) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isFollowing) Icons.Default.PersonRemove else Icons.Default.PersonAdd,
+                            contentDescription = if (isFollowing) "Unfollow" else "Follow",
+                            tint = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.padding(9.dp)
+                        )
+                    }
+                    // Mute circle button
+                    if (onMuteUser != null || onUnmuteUser != null) {
+                        Surface(
+                            onClick = { if (isBlocked) onUnmuteUser?.invoke() else onMuteUser?.invoke() },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isBlocked) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                                contentDescription = if (isBlocked) "Unmute" else "Mute",
+                                tint = if (isBlocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(9.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

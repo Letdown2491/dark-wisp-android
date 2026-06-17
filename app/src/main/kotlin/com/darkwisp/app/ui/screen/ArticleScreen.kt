@@ -78,6 +78,7 @@ fun ArticleScreen(
     onRepost: (NostrEvent) -> Unit = {},
     onQuote: (NostrEvent) -> Unit = {},
     onZap: (NostrEvent) -> Unit = {},
+    onZapInstant: (NostrEvent) -> Unit = onZap,
     onAddToList: (String) -> Unit = {},
     noteActions: NoteActions? = null,
     zapAnimatingIds: Set<String> = emptySet(),
@@ -135,7 +136,7 @@ fun ArticleScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -362,6 +363,7 @@ fun ArticleScreen(
                             hasUserReposted = commentHasUserReposted,
                             repostCount = commentRepostCount,
                             onZap = { onZap(event) },
+                            onZapLongPress = { onZapInstant(event) },
                             hasUserZapped = commentHasUserZapped,
                             likeCount = commentLikeCount,
                             replyCount = commentReplyCount,

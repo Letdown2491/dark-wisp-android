@@ -106,6 +106,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextButton
 import com.darkwisp.app.R
 import com.darkwisp.app.nostr.Bolt11
+import com.darkwisp.app.nostr.Noffer
+import com.darkwisp.app.nostr.NofferData
 import com.darkwisp.app.nostr.Nip19
 import com.darkwisp.app.nostr.Nip30
 import com.darkwisp.app.nostr.toHex
@@ -131,7 +133,9 @@ private const val INLINE_CONTENT_TAG = "androidx.compose.foundation.text.inlineC
 
 data class MediaSettings(
     val autoLoadMedia: Boolean = true,
-    val videoAutoPlay: Boolean = true
+    val videoAutoPlay: Boolean = true,
+    val mediaLayoutStyle: com.darkwisp.app.repo.InterfacePreferences.MediaLayoutStyle =
+        com.darkwisp.app.repo.InterfacePreferences.MediaLayoutStyle.GALLERY
 )
 
 val LocalMediaSettings = compositionLocalOf { MediaSettings() }
@@ -153,6 +157,7 @@ data class NoteActions(
     val onRepost: (NostrEvent) -> Unit = {},
     val onQuote: (NostrEvent) -> Unit = {},
     val onZap: (NostrEvent) -> Unit = {},
+    val onZapInstant: (NostrEvent) -> Unit = {},
     val onProfileClick: (String) -> Unit = {},
     val onNoteClick: (String) -> Unit = {},
     val onAddToList: (String) -> Unit = {},
@@ -185,7 +190,8 @@ data class MediaMeta(
     val mime: String? = null,
     val dimension: String? = null,
     val thumbhash: String? = null,
-    val blurhash: String? = null
+    val blurhash: String? = null,
+    val image: String? = null
 )
 
 internal sealed interface ContentSegment {
@@ -202,6 +208,8 @@ internal sealed interface ContentSegment {
     data class CustomEmojiSegment(val shortcode: String, val url: String) : ContentSegment
     data class HashtagSegment(val tag: String) : ContentSegment
     data class LightningInvoiceSegment(val invoice: String, val decoded: Bolt11.DecodedInvoice) : ContentSegment
+    /** CLINK payment offer (`noffer1…`) — rendered as a "Pay offer" card. */
+    data class NofferSegment(val noffer: NofferData) : ContentSegment
     data class GroupInviteSegment(val relayUrl: String, val groupId: String) : ContentSegment
 }
 
@@ -221,7 +229,7 @@ private val blossomPathRegex = Regex("""^/[0-9a-f]{64}$""", RegexOption.IGNORE_C
 
 /**
  * Parse NIP-92 imeta tags from a list of tags to build a URL→metadata map.
- * Tag format: ["imeta", "url https://...", "m image/png", "dim 1024x768", "thumbhash ...", "blurhash ...", ...]
+ * Tag format: ["imeta", "url https://...", "m image/png", "dim 1024x768", "thumbhash ...", "blurhash ...", "image https://...", ...]
  */
 fun parseImetaTags(tags: List<List<String>>): Map<String, MediaMeta> {
     val map = mutableMapOf<String, MediaMeta>()
@@ -232,6 +240,7 @@ fun parseImetaTags(tags: List<List<String>>): Map<String, MediaMeta> {
         var dim: String? = null
         var thumb: String? = null
         var blur: String? = null
+        var image: String? = null
         for (i in 1 until tag.size) {
             val entry = tag[i]
             when {
@@ -240,10 +249,11 @@ fun parseImetaTags(tags: List<List<String>>): Map<String, MediaMeta> {
                 entry.startsWith("dim ") -> dim = entry.removePrefix("dim ")
                 entry.startsWith("thumbhash ") -> thumb = entry.removePrefix("thumbhash ")
                 entry.startsWith("blurhash ") -> blur = entry.removePrefix("blurhash ")
+                entry.startsWith("image ") -> image = entry.removePrefix("image ")
             }
         }
         if (url != null) {
-            map[url] = MediaMeta(url = url, mime = mime, dimension = dim, thumbhash = thumb, blurhash = blur)
+            map[url] = MediaMeta(url = url, mime = mime, dimension = dim, thumbhash = thumb, blurhash = blur, image = image)
         }
     }
     return map
@@ -380,10 +390,20 @@ internal fun parseContent(content: String, emojiMap: Map<String, String> = empty
     }
 
     // Third pass: detect lightning invoices in text segments
-    val finalResult = mutableListOf<ContentSegment>()
+    val afterInvoices = mutableListOf<ContentSegment>()
     for (segment in afterEmoji) {
         if (segment is ContentSegment.TextSegment) {
-            finalResult.addAll(splitTextForInvoices(segment.text))
+            afterInvoices.addAll(splitTextForInvoices(segment.text))
+        } else {
+            afterInvoices.add(segment)
+        }
+    }
+
+    // Fourth pass: detect CLINK offers (noffer1…) in text segments
+    val finalResult = mutableListOf<ContentSegment>()
+    for (segment in afterInvoices) {
+        if (segment is ContentSegment.TextSegment) {
+            finalResult.addAll(splitTextForNoffers(segment.text))
         } else {
             finalResult.add(segment)
         }
@@ -422,6 +442,33 @@ private fun splitTextForInvoices(text: String): List<ContentSegment> {
             result.add(ContentSegment.TextSegment(text.substring(lastEnd, match.range.first)))
         }
         result.add(ContentSegment.LightningInvoiceSegment(invoice, decoded))
+        lastEnd = match.range.last + 1
+    }
+    if (!anyFound) return listOf(ContentSegment.TextSegment(text))
+    if (lastEnd < text.length) {
+        result.add(ContentSegment.TextSegment(text.substring(lastEnd)))
+    }
+    return result
+}
+
+private val nofferRegex = Regex(
+    """(?:nostr:)?noffer1[023456789acdefghjklmnpqrstuvwxyz]{20,}""",
+    RegexOption.IGNORE_CASE
+)
+
+private fun splitTextForNoffers(text: String): List<ContentSegment> {
+    val matches = nofferRegex.findAll(text).toList()
+    if (matches.isEmpty()) return listOf(ContentSegment.TextSegment(text))
+    val result = mutableListOf<ContentSegment>()
+    var lastEnd = 0
+    var anyFound = false
+    for (match in matches) {
+        val decoded = Noffer.decodeOrNull(match.value) ?: continue
+        anyFound = true
+        if (match.range.first > lastEnd) {
+            result.add(ContentSegment.TextSegment(text.substring(lastEnd, match.range.first)))
+        }
+        result.add(ContentSegment.NofferSegment(decoded))
         lastEnd = match.range.last + 1
     }
     if (!anyFound) return listOf(ContentSegment.TextSegment(text))
@@ -619,36 +666,102 @@ fun RichContent(
 ) {
     val segments = remember(content, emojiMap, imetaMap, plainLinks) { parseContent(content.trimEnd('\n', '\r'), emojiMap, imetaMap, trimBlankLines = !plainLinks) }
     val profileVer = eventRepo?.profileVersion?.collectAsState()?.value ?: 0
-    var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
+    var fullScreenPager by remember { mutableStateOf<Pair<List<MediaPagerItem>, Int>?>(null) }
+    val mediaLayoutStyle = LocalMediaSettings.current.mediaLayoutStyle
+    val galleryMode = mediaLayoutStyle == com.darkwisp.app.repo.InterfacePreferences.MediaLayoutStyle.GALLERY
 
-    if (fullScreenImageUrl != null) {
-        FullScreenImageViewer(
-            imageUrl = fullScreenImageUrl!!,
-            onDismiss = { fullScreenImageUrl = null }
+    // Every image/video/unknown-media URL in the post, in order. Tapping
+    // any inline media (stack mode) or any tile (gallery mode) opens the
+    // swipeable pager at that item's position — image pages get pinch-zoom,
+    // video pages get a play overlay that hands off to FullScreenVideoState.
+    val allMediaItems = remember(segments) {
+        segments.mapNotNull { seg ->
+            when (seg) {
+                is ContentSegment.ImageSegment -> MediaPagerItem.Image(seg.meta.url)
+                is ContentSegment.UnknownMediaSegment -> MediaPagerItem.Image(seg.meta.url)
+                is ContentSegment.VideoSegment -> MediaPagerItem.Video(seg.meta.url, posterModel = seg.meta.url)
+                else -> null
+            }
+        }
+    }
+    val openPagerFor: (String) -> Unit = { url ->
+        val idx = allMediaItems.indexOfFirst { it.url == url }
+        if (idx >= 0) fullScreenPager = allMediaItems to idx
+    }
+
+    fullScreenPager?.let { (mediaItems, idx) ->
+        FullScreenMediaPager(
+            items = mediaItems,
+            initialPage = idx,
+            onDismiss = { fullScreenPager = null }
         )
     }
 
-    val groups = remember(segments, plainLinks) {
-        val built = mutableListOf<Any>() // Either List<ContentSegment> (inline run) or ContentSegment (block)
+    val groups = remember(segments, plainLinks, galleryMode) {
+        val built = mutableListOf<Any>() // List<ContentSegment> (inline run), List<CarouselItem> (carousel run), or ContentSegment
         fun isInline(s: ContentSegment) = s is ContentSegment.TextSegment ||
                 s is ContentSegment.HashtagSegment ||
                 s is ContentSegment.NostrProfileSegment ||
                 s is ContentSegment.CustomEmojiSegment ||
                 s is ContentSegment.InlineLinkSegment ||
                 (plainLinks && s is ContentSegment.LinkSegment)
+        fun toCarouselItem(s: ContentSegment): CarouselItem? = when (s) {
+            is ContentSegment.ImageSegment -> CarouselItem.Image(s.meta)
+            is ContentSegment.VideoSegment -> CarouselItem.Video(s.meta)
+            is ContentSegment.UnknownMediaSegment -> CarouselItem.Unknown(s.meta)
+            else -> null
+        }
+        // Whitespace-only text between media is treated as a joiner so two
+        // image URLs separated by `\n\n` still group into one carousel.
+        fun isWhitespaceText(s: ContentSegment): Boolean =
+            s is ContentSegment.TextSegment && s.text.all { it.isWhitespace() }
 
-        for (segment in segments) {
-            if (isInline(segment)) {
-                val last = built.lastOrNull()
-                if (last is MutableList<*>) {
-                    @Suppress("UNCHECKED_CAST")
-                    (last as MutableList<ContentSegment>).add(segment)
+        // Single pass over the original segments, mirroring iOS
+        // `RichContentView.groupSegments`. Media runs of 2+ collapse into a
+        // carousel; inline runs accumulate into one Text block; everything
+        // else lands as a standalone block segment.
+        var i = 0
+        while (i < segments.size) {
+            val seg = segments[i]
+            val asCarousel = toCarouselItem(seg)
+            if (galleryMode && asCarousel != null) {
+                val run = mutableListOf<CarouselItem>(asCarousel)
+                var j = i + 1
+                while (j < segments.size) {
+                    val next = segments[j]
+                    val nextCarousel = toCarouselItem(next)
+                    if (nextCarousel != null) {
+                        run.add(nextCarousel)
+                        j++
+                    } else if (isWhitespaceText(next) &&
+                        j + 1 < segments.size &&
+                        toCarouselItem(segments[j + 1]) != null
+                    ) {
+                        j++ // skip whitespace joiner between two media items
+                    } else {
+                        break
+                    }
+                }
+                if (run.size >= 2) {
+                    built.add(run)
                 } else {
-                    built.add(mutableListOf(segment))
+                    built.add(seg) // single item stays standalone
+                }
+                i = j
+                continue
+            }
+            if (isInline(seg)) {
+                val last = built.lastOrNull()
+                if (last is MutableList<*> && last.firstOrNull() is ContentSegment) {
+                    @Suppress("UNCHECKED_CAST")
+                    (last as MutableList<ContentSegment>).add(seg)
+                } else {
+                    built.add(mutableListOf<ContentSegment>(seg))
                 }
             } else {
-                built.add(segment)
+                built.add(seg)
             }
+            i++
         }
         built
     }
@@ -664,8 +777,24 @@ fun RichContent(
     androidx.compose.runtime.CompositionLocalProvider(
         LocalAudioPostContext provides AudioPostContext(authorPubkey = authorPubkey, eventRepo = eventRepo)
     ) {
-    Column(modifier = modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (group in groups) {
+            if (group is List<*> && group.firstOrNull() is CarouselItem) {
+                @Suppress("UNCHECKED_CAST")
+                val carouselItems = group as List<CarouselItem>
+                MediaCarousel(
+                    items = carouselItems,
+                    onOpenPager = { localIdx ->
+                        // Translate the carousel-local index into the
+                        // post-wide media index so the pager opens on the
+                        // right page even if the post has other media
+                        // segments outside this carousel run.
+                        val tappedUrl = carouselItems[localIdx].meta.url
+                        openPagerFor(tappedUrl)
+                    }
+                )
+                continue
+            }
             if (group is List<*>) {
                 @Suppress("UNCHECKED_CAST")
                 val inlineSegments = group as List<ContentSegment>
@@ -811,7 +940,7 @@ fun RichContent(
                     is ContentSegment.ImageSegment -> {
                         ImageWithContextMenu(
                             meta = segment.meta,
-                            onFullScreen = { fullScreenImageUrl = segment.meta.url }
+                            onFullScreen = { openPagerFor(segment.meta.url) }
                         )
                     }
                     is ContentSegment.VideoSegment -> {
@@ -832,7 +961,7 @@ fun RichContent(
                     is ContentSegment.UnknownMediaSegment -> {
                         UnknownMediaContent(
                             meta = segment.meta,
-                            onFullScreenImage = { fullScreenImageUrl = segment.meta.url },
+                            onFullScreenImage = { openPagerFor(segment.meta.url) },
                             onFullScreenVideo = { positionMs ->
                                 FullScreenVideoState.enter(segment.meta.url, positionMs)
                             }
@@ -936,6 +1065,13 @@ fun RichContent(
                         LightningInvoiceCard(
                             invoice = segment.invoice,
                             decoded = segment.decoded,
+                            onPayInvoice = noteActions?.onPayInvoice
+                        )
+                    }
+                    is ContentSegment.NofferSegment -> {
+                        NofferCard(
+                            noffer = segment.noffer,
+                            eventRepo = eventRepo,
                             onPayInvoice = noteActions?.onPayInvoice
                         )
                     }
@@ -1101,6 +1237,7 @@ fun QuotedNote(
                     hasUserReposted = hasUserReposted,
                     repostCount = repostCount,
                     onZap = { effectiveActions.onZap(event) },
+                    onZapLongPress = { effectiveActions.onZapInstant(event) },
                     hasUserZapped = hasUserZapped,
                     likeCount = likeCount,
                     replyCount = replyCount,
@@ -2213,8 +2350,25 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
 
-    val exoPlayer = remember(url) {
-        (PipController.reclaimPlayer(url)
+    // A note can carry an arbitrary number of video URLs, and a prepared
+    // player per composed URL exhausts hardware codec instances (~16-32
+    // device-wide), threads (~3 per player), and memory all at once. The
+    // player therefore only exists while its video is near the viewport
+    // (or after an explicit tap); scrolling fully off-screen releases it
+    // and remembers the position.
+    var playerWanted by remember(url) { mutableStateOf(false) }
+    var playOnCreate by remember(url) { mutableStateOf(false) }
+    var resumePositionMs by remember(url) { mutableLongStateOf(0L) }
+    var exoPlayer by remember(url) { mutableStateOf<ExoPlayer?>(null) }
+
+    // Sync volume with global mute state
+    LaunchedEffect(isMuted) {
+        exoPlayer?.volume = if (isMuted) 0f else 1f
+    }
+
+    DisposableEffect(url, playerWanted) {
+        if (!playerWanted) return@DisposableEffect onDispose {}
+        val player = (PipController.reclaimPlayer(url)
             ?: HttpClientFactory.createExoPlayer(context).apply {
                 setMediaItem(MediaItem.fromUri(Uri.parse(url)))
                 prepare()
@@ -2223,14 +2377,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
             }).apply {
                 repeatMode = Player.REPEAT_MODE_ONE
             }
-    }
-
-    // Sync volume with global mute state
-    LaunchedEffect(isMuted) {
-        exoPlayer.volume = if (isMuted) 0f else 1f
-    }
-
-    DisposableEffect(url) {
+        if (resumePositionMs > 0) player.seekTo(resumePositionMs)
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
@@ -2239,7 +2386,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
             }
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
-                if (!playing && exoPlayer.playbackState == Player.STATE_READY) {
+                if (!playing && player.playbackState == Player.STATE_READY) {
                     userPaused = true
                 }
             }
@@ -2247,13 +2394,23 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 isBuffering = state == Player.STATE_BUFFERING
             }
         }
-        exoPlayer.addListener(listener)
+        player.addListener(listener)
+        if (playOnCreate) {
+            playOnCreate = false
+            activeVideoUrl.value = url
+            player.play()
+        }
+        exoPlayer = player
         onDispose {
-            exoPlayer.removeListener(listener)
+            player.removeListener(listener)
             activeVideoUrl.compareAndSet(url, null)
+            resumePositionMs = player.currentPosition
+            isPlaying = false
+            isBuffering = false
+            exoPlayer = null
             // Only release if not handed off to PiP
             if (PipController.pipState.value?.url != url) {
-                exoPlayer.release()
+                player.release()
             }
         }
     }
@@ -2275,25 +2432,80 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 val visibleHeight = (visibleBottom - visibleTop).coerceAtLeast(0f)
                 val totalHeight = bounds.height
                 val visibleFraction = if (totalHeight > 0) visibleHeight / totalHeight else 0f
+                val player = exoPlayer
                 if (visibleFraction > 0.5f) {
-                    if (mediaSettings.videoAutoPlay && !exoPlayer.isPlaying && !userPaused) {
+                    if (mediaSettings.videoAutoPlay && !userPaused) {
                         val current = activeVideoUrl.value
                         if (current == null || current == url) {
-                            activeVideoUrl.value = url
-                            exoPlayer.play()
+                            if (player == null) {
+                                playerWanted = true
+                            } else if (!player.isPlaying) {
+                                activeVideoUrl.value = url
+                                player.play()
+                            }
                         }
                     }
+                } else if (visibleFraction <= 0f) {
+                    // Fully off-screen: release the player, keep the position
+                    if (playerWanted) playerWanted = false
+                    userPaused = false
                 } else {
-                    if (exoPlayer.isPlaying) exoPlayer.pause()
+                    if (player?.isPlaying == true) player.pause()
                     activeVideoUrl.compareAndSet(url, null)
                     userPaused = false
                 }
             }
     ) {
+        val player = exoPlayer
+        if (player == null) {
+            // Stand-in until the player is needed; tap plays immediately
+            val blurPainter = rememberMediaPlaceholderPainter(meta.thumbhash, meta.blurhash, meta.dimension)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable {
+                        userPaused = false
+                        playOnCreate = true
+                        playerWanted = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (meta.image != null) {
+                    // Uploader-provided preview frame (NIP-92 imeta "image")
+                    AsyncImage(
+                        model = meta.image,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        placeholder = blurPainter,
+                        error = blurPainter,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (blurPainter != null) {
+                    Image(
+                        painter = blurPainter,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "Play video",
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(
+                            color = Color.Black.copy(alpha = 0.5f),
+                            shape = CircleShape
+                        )
+                        .padding(8.dp),
+                    tint = Color.White
+                )
+            }
+        } else {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    player = exoPlayer
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     useController = true
                     controllerAutoShow = false
@@ -2306,6 +2518,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                     hideController()
                 }
             },
+            update = { it.player = player },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -2355,8 +2568,8 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 Spacer(Modifier.width(4.dp))
                 IconButton(
                     onClick = {
-                        val position = exoPlayer.currentPosition
-                        exoPlayer.pause()
+                        val position = player.currentPosition
+                        player.pause()
                         onFullScreen(position)
                     },
                     colors = buttonColors,
@@ -2370,7 +2583,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 Spacer(Modifier.width(4.dp))
                 IconButton(
                     onClick = {
-                        PipController.enterPip(url, exoPlayer, videoAspectRatio)
+                        PipController.enterPip(url, player, videoAspectRatio)
                     },
                     colors = buttonColors,
                     modifier = Modifier.size(36.dp)
@@ -2390,10 +2603,10 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                     .clickable {
                         activeVideoUrl.value = url
                         userPaused = false
-                        if (exoPlayer.playbackState == Player.STATE_ENDED) {
-                            exoPlayer.seekTo(0)
+                        if (player.playbackState == Player.STATE_ENDED) {
+                            player.seekTo(0)
                         }
-                        exoPlayer.play()
+                        player.play()
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -2411,6 +2624,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 )
             }
         }
+        } // player != null
     }
     } // centering wrapper
 }
@@ -2492,8 +2706,22 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
     var userPaused by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
-    val exoPlayer = remember(url) {
-        (PipController.reclaimPlayer(url)
+
+    // Same lazy lifecycle as InlineVideoPlayerWithFullscreen: the player
+    // only exists while near the viewport (or after a tap), so a note
+    // full of video URLs can't exhaust codecs/threads/memory.
+    var playerWanted by remember(url) { mutableStateOf(false) }
+    var playOnCreate by remember(url) { mutableStateOf(false) }
+    var resumePositionMs by remember(url) { mutableLongStateOf(0L) }
+    var exoPlayer by remember(url) { mutableStateOf<ExoPlayer?>(null) }
+
+    LaunchedEffect(isMuted) {
+        exoPlayer?.volume = if (isMuted) 0f else 1f
+    }
+
+    DisposableEffect(url, playerWanted) {
+        if (!playerWanted) return@DisposableEffect onDispose {}
+        val player = (PipController.reclaimPlayer(url)
             ?: HttpClientFactory.createExoPlayer(context).apply {
                 setMediaItem(MediaItem.fromUri(Uri.parse(url)))
                 prepare()
@@ -2502,13 +2730,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
             }).apply {
                 repeatMode = Player.REPEAT_MODE_ONE
             }
-    }
-
-    LaunchedEffect(isMuted) {
-        exoPlayer.volume = if (isMuted) 0f else 1f
-    }
-
-    DisposableEffect(url) {
+        if (resumePositionMs > 0) player.seekTo(resumePositionMs)
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
@@ -2517,7 +2739,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
             }
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
-                if (!playing && exoPlayer.playbackState == Player.STATE_READY) {
+                if (!playing && player.playbackState == Player.STATE_READY) {
                     userPaused = true
                 }
             }
@@ -2525,12 +2747,22 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
                 isBuffering = state == Player.STATE_BUFFERING
             }
         }
-        exoPlayer.addListener(listener)
+        player.addListener(listener)
+        if (playOnCreate) {
+            playOnCreate = false
+            activeVideoUrl.value = url
+            player.play()
+        }
+        exoPlayer = player
         onDispose {
-            exoPlayer.removeListener(listener)
+            player.removeListener(listener)
             activeVideoUrl.compareAndSet(url, null)
+            resumePositionMs = player.currentPosition
+            isPlaying = false
+            isBuffering = false
+            exoPlayer = null
             if (PipController.pipState.value?.url != url) {
-                exoPlayer.release()
+                player.release()
             }
         }
     }
@@ -2547,25 +2779,61 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
                 val visibleHeight = (visibleBottom - visibleTop).coerceAtLeast(0f)
                 val totalHeight = bounds.height
                 val visibleFraction = if (totalHeight > 0) visibleHeight / totalHeight else 0f
+                val player = exoPlayer
                 if (visibleFraction > 0.5f) {
-                    if (mediaSettings.videoAutoPlay && !exoPlayer.isPlaying && !userPaused) {
+                    if (mediaSettings.videoAutoPlay && !userPaused) {
                         val current = activeVideoUrl.value
                         if (current == null || current == url) {
-                            activeVideoUrl.value = url
-                            exoPlayer.play()
+                            if (player == null) {
+                                playerWanted = true
+                            } else if (!player.isPlaying) {
+                                activeVideoUrl.value = url
+                                player.play()
+                            }
                         }
                     }
+                } else if (visibleFraction <= 0f) {
+                    // Fully off-screen: release the player, keep the position
+                    if (playerWanted) playerWanted = false
+                    userPaused = false
                 } else {
-                    if (exoPlayer.isPlaying) exoPlayer.pause()
+                    if (player?.isPlaying == true) player.pause()
                     activeVideoUrl.compareAndSet(url, null)
                     userPaused = false
                 }
             }
     ) {
+        val player = exoPlayer
+        if (player == null) {
+            // Stand-in until the player is needed; tap plays immediately
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable {
+                        userPaused = false
+                        playOnCreate = true
+                        playerWanted = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "Play video",
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(
+                            color = Color.Black.copy(alpha = 0.5f),
+                            shape = CircleShape
+                        )
+                        .padding(8.dp),
+                    tint = Color.White
+                )
+            }
+        } else {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    player = exoPlayer
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     useController = true
                     controllerAutoShow = false
@@ -2578,6 +2846,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
                     hideController()
                 }
             },
+            update = { it.player = player },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -2618,10 +2887,10 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
                     .clickable {
                         activeVideoUrl.value = url
                         userPaused = false
-                        if (exoPlayer.playbackState == Player.STATE_ENDED) {
-                            exoPlayer.seekTo(0)
+                        if (player.playbackState == Player.STATE_ENDED) {
+                            player.seekTo(0)
                         }
-                        exoPlayer.play()
+                        player.play()
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -2639,6 +2908,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
                 )
             }
         }
+        } // player != null
     }
 }
 
