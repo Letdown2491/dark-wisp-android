@@ -654,6 +654,10 @@ fun RichContent(
     emojiMap: Map<String, String> = emptyMap(),
     imetaMap: Map<String, MediaMeta> = emptyMap(),
     plainLinks: Boolean = false,
+    // When true, a CLINK noffer renders as a compact inline label instead of
+    // the full Pay-offer card — used on the profile bio, where the offer is
+    // already payable via the profile's dedicated pay button.
+    plainNoffer: Boolean = false,
     eventRepo: EventRepository? = null,
     onProfileClick: ((String) -> Unit)? = null,
     onNoteClick: ((String) -> Unit)? = null,
@@ -1069,11 +1073,19 @@ fun RichContent(
                         )
                     }
                     is ContentSegment.NofferSegment -> {
-                        NofferCard(
-                            noffer = segment.noffer,
-                            eventRepo = eventRepo,
-                            onPayInvoice = noteActions?.onPayInvoice
-                        )
+                        if (plainNoffer) {
+                            Text(
+                                text = "⚡ CLINK offer",
+                                style = style,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            NofferCard(
+                                noffer = segment.noffer,
+                                eventRepo = eventRepo,
+                                onPayInvoice = noteActions?.onPayInvoice
+                            )
+                        }
                     }
                     is ContentSegment.GroupInviteSegment -> {
                         GroupInviteCard(

@@ -669,6 +669,9 @@
     <string name="profile_pinned">Pinned</string>
     <string name="profile_json_copied">Profile JSON copied</string>
     <string name="profile_send_message">Send message</string>
+    <string name="profile_pay">Pay</string>
+    <string name="profile_pay_zap">Profile Zap</string>
+    <string name="profile_pay_offer">Pay CLINK Offer</string>
     <string name="profile_search_notes">Search notes</string>
     <string name="profile_crawling_still">Still crawling or account too new</string>
     <string name="profile_crawling_no_results">No ranked results yet. Check back later.</string>
