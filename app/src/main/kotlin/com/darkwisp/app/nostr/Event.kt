@@ -8,6 +8,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -124,6 +125,29 @@ data class NostrEvent(
                 },
                 content = (array.jsonArray[5] as JsonPrimitive).content,
                 sig = (array.jsonArray[6] as JsonPrimitive).content
+            )
+        }
+
+        /**
+         * Decode an event from its standard JSON object form. Extracts fields directly
+         * from the already-parsed [JsonObject] instead of running the generated
+         * serializer over it — one fewer pass over the tree on the per-message hot path.
+         * Unknown keys are ignored (matches the serializer's ignoreUnknownKeys).
+         */
+        fun fromJsonObject(obj: JsonObject): NostrEvent {
+            fun str(key: String): String =
+                (obj[key] as? JsonPrimitive)?.content
+                    ?: throw IllegalArgumentException("Missing $key")
+            return NostrEvent(
+                id = str("id"),
+                pubkey = str("pubkey"),
+                created_at = str("created_at").toLong(),
+                kind = str("kind").toInt(),
+                tags = (obj["tags"] as? JsonArray)?.map { tagArr ->
+                    tagArr.jsonArray.map { it.jsonPrimitive.content }
+                } ?: emptyList(),
+                content = str("content"),
+                sig = str("sig")
             )
         }
     }
