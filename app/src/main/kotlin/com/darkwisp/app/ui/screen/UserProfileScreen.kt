@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -45,7 +48,6 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
-import androidx.compose.material.icons.outlined.Sell
 import com.darkwisp.app.nostr.Nip30
 import com.darkwisp.app.ui.component.Nip05Badge
 import com.darkwisp.app.ui.component.PaymentTargetSheet
@@ -375,6 +377,7 @@ fun UserProfileScreen(
         profile?.clinkOffer?.let { com.darkwisp.app.nostr.Noffer.decodeOrNull(it) }
     }
     var showOfferPaySheet by remember { mutableStateOf(false) }
+    var showLightningSheet by remember { mutableStateOf(false) }
 
     if (showOfferPaySheet && profileClinkOffer != null) {
         com.darkwisp.app.ui.component.NofferPaySheet(
@@ -383,6 +386,16 @@ fun UserProfileScreen(
             onPayInvoice = onPayInvoice,
             onDismiss = { showOfferPaySheet = false }
         )
+    }
+
+    // Fallback for tapping the lightning address with no wallet connected:
+    // the same QR + copy sheet used for other payment targets.
+    if (showLightningSheet) {
+        profile?.lud16?.let { lud16 ->
+            PaymentTargetSheet(
+                target = NipA3.PaymentTarget(type = "lightning", authority = lud16)
+            ) { showLightningSheet = false }
+        }
     }
 
     if (showQrDialog) {
@@ -599,6 +612,8 @@ fun UserProfileScreen(
                     onSendDm = onSendDm,
                     onZapClick = if (onZapProfile != null) { { showProfileZapDialog = true } } else null,
                     onPayOffer = if (profileClinkOffer != null) { { showOfferPaySheet = true } } else null,
+                    isWalletConnected = isWalletConnected,
+                    onLightningPay = { showLightningSheet = true },
                     followingCount = followList.size,
                     followedBy = followedBy,
                     followsYou = !isOwnProfile && userPubkey != null && followList.any { it.pubkey == userPubkey },
@@ -1184,6 +1199,8 @@ private fun ProfileHeader(
     onSendDm: (() -> Unit)? = null,
     onZapClick: (() -> Unit)? = null,
     onPayOffer: (() -> Unit)? = null,
+    isWalletConnected: Boolean = false,
+    onLightningPay: (() -> Unit)? = null,
     followingCount: Int = 0,
     followedBy: List<String> = emptyList(),
     followsYou: Boolean = false,
@@ -1245,47 +1262,45 @@ private fun ProfileHeader(
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (onSendDm != null) {
-                        IconButton(onClick = onSendDm) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Send,
-                                contentDescription = stringResource(R.string.profile_send_message),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    if (profile?.lud16 != null && onZapClick != null) {
-                        val useZapBolt = com.darkwisp.app.ui.util.useBoltIcon()
-                        IconButton(onClick = onZapClick) {
-                            if (useZapBolt) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_bolt),
-                                    contentDescription = "Zap",
-                                    tint = Color(0xFFFFC107),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            } else {
-                                Icon(
-                                    Icons.Outlined.CurrencyBitcoin,
-                                    contentDescription = "Zap",
-                                    tint = Color(0xFFFFC107),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    }
-                    if (onPayOffer != null) {
                         Surface(
-                            onClick = onPayOffer,
+                            onClick = onSendDm,
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.size(40.dp)
                         ) {
                             Icon(
-                                Icons.Outlined.Sell,
-                                contentDescription = "Pay offer",
-                                tint = Color(0xFFFFC107),
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(R.string.profile_send_message),
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(10.dp)
                             )
+                        }
+                    }
+                    // Zap button (lud16). The CLINK offer, if any, gets its own
+                    // explicit "Pay CLINK Offer" row in the payment section below
+                    // rather than sharing this button.
+                    if (profile?.lud16 != null && onZapClick != null) {
+                        Surface(
+                            onClick = onZapClick,
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            if (com.darkwisp.app.ui.util.useBoltIcon()) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_bolt),
+                                    contentDescription = stringResource(R.string.profile_pay_zap),
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.padding(11.dp)
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Outlined.CurrencyBitcoin,
+                                    contentDescription = stringResource(R.string.profile_pay_zap),
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
                         }
                     }
                     // Follow circle button
@@ -1358,81 +1373,177 @@ private fun ProfileHeader(
         profile?.about?.let { about ->
             val emojiMap = remember(pubkey) { Nip30.parseEmojiTags(emptyList()) } // Profiles use inline or alternate tags usually not available here easily without event
             val imetaMap = remember(pubkey) { parseImetaTags(emptyList()) }
+            val bioIsLong = remember(about) { about.length > 180 || about.contains('\n') }
+            var bioExpanded by remember(pubkey) { mutableStateOf(false) }
             Spacer(Modifier.height(8.dp))
-            RichContent(
-                content = about,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                plainLinks = true,
-                emojiMap = emojiMap,
-                imetaMap = imetaMap,
-                eventRepo = eventRepo,
-                onProfileClick = onNavigateToProfile
-            )
+            if (bioIsLong && !bioExpanded) {
+                // Clip to ~5 lines of bodyMedium; RichContent renders mentions/hashtags correctly
+                Box(modifier = Modifier.heightIn(max = 100.dp).clipToBounds()) {
+                    RichContent(
+                        content = about,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        plainLinks = true,
+                        plainNoffer = true,
+                        emojiMap = emojiMap,
+                        imetaMap = imetaMap,
+                        eventRepo = eventRepo,
+                        onProfileClick = onNavigateToProfile
+                    )
+                }
+                TextButton(
+                    onClick = { bioExpanded = true },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "Read more",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            } else {
+                RichContent(
+                    content = about,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    plainLinks = true,
+                    plainNoffer = true,
+                    emojiMap = emojiMap,
+                    imetaMap = imetaMap,
+                    eventRepo = eventRepo,
+                    onProfileClick = onNavigateToProfile
+                )
+                if (bioIsLong) {
+                    TextButton(
+                        onClick = { bioExpanded = false },
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "Show less",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
 
+        // Payment methods (lightning address + NIP-A3 targets) share a common
+        // row layout: a fixed-width leading icon/symbol column so labels align,
+        // generous vertical padding so each is an easy, well-separated tap
+        // target. Tapping opens the relevant pay/zap flow.
+        val hasAnyPaymentRow = profile?.lud16 != null || onPayOffer != null || paymentTargets.any {
+            !it.type.equals("clink", ignoreCase = true) && !it.authority.startsWith("noffer1", ignoreCase = true)
+        }
+        if (hasAnyPaymentRow) Spacer(Modifier.height(8.dp))
+
         profile?.lud16?.let { lightning ->
-            val context = LocalContext.current
-            Spacer(Modifier.height(6.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Lightning address", lightning))
-                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                }
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        // Wallet connected → zap directly; otherwise show a
+                        // pay sheet (QR + copy) like the other payment targets.
+                        if (isWalletConnected && onZapClick != null) onZapClick()
+                        else onLightningPay?.invoke()
+                    }
+                    .padding(vertical = 10.dp)
             ) {
-                val useBoltIcon = com.darkwisp.app.ui.util.useBoltIcon()
-                if (useBoltIcon) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bolt),
-                        contentDescription = "Lightning address",
-                        tint = Color(0xFFFFC107),
-                        modifier = Modifier.size(16.dp)
-                    )
-                } else {
-                    Icon(
-                        Icons.Outlined.CurrencyBitcoin,
-                        contentDescription = "Lightning address",
-                        tint = Color(0xFFFFC107),
-                        modifier = Modifier.size(16.dp)
-                    )
+                Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                    if (com.darkwisp.app.ui.util.useBoltIcon()) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_bolt),
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Outlined.CurrencyBitcoin,
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = lightning,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        // NIP-A3 payment targets
-        paymentTargets.forEach { target ->
-            Spacer(Modifier.height(6.dp))
+        // Explicit "Pay CLINK Offer" row so the offer is a visible, named option
+        // (matches the lightning/payment-target row style). Opens the offer sheet.
+        if (onPayOffer != null) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable { onPaymentTargetClick(target) }
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onPayOffer.invoke() }
+                    .padding(vertical = 10.dp)
             ) {
+                Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                    if (com.darkwisp.app.ui.util.useBoltIcon()) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_bolt),
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Outlined.CurrencyBitcoin,
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = NipA3.symbol(target.type) ?: "¤",
+                    text = stringResource(R.string.profile_pay_offer),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFFFC107)
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(Modifier.width(4.dp))
+            }
+        }
+
+        // NIP-A3 payment targets — icon + name only; the raw address (often a
+        // long Monero string or noffer) is shown and copyable in the sheet that
+        // opens on tap, so it stays off the profile to keep it readable.
+        // CLINK offers are dropped here: they're already payable via the
+        // profile's dedicated pay button, so listing them again is redundant.
+        paymentTargets.filterNot {
+            it.type.equals("clink", ignoreCase = true) || it.authority.startsWith("noffer1", ignoreCase = true)
+        }.forEach { target ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onPaymentTargetClick(target) }
+                    .padding(vertical = 10.dp)
+            ) {
+                Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = NipA3.symbol(target.type) ?: "¤",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFFFC107)
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = NipA3.displayName(target.type),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = target.authority,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
                 )
             }
         }
