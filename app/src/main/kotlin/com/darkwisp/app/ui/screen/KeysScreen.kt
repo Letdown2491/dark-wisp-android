@@ -46,6 +46,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.darkwisp.app.R
 import com.darkwisp.app.nostr.Nip19
+import com.darkwisp.app.nostr.hexToByteArray
 import com.darkwisp.app.repo.KeyRepository
 import com.darkwisp.app.repo.SigningMode
 
@@ -64,8 +65,12 @@ fun KeysScreen(
     keyRepository: KeyRepository,
     onBack: () -> Unit
 ) {
+    val pubkeyHex = remember { keyRepository.getPubkeyHex() }
     val keypair = remember { keyRepository.getKeypair() }
-    val npub = remember { keypair?.let { Nip19.npubEncode(it.pubkey) } }
+    val npub = remember {
+        pubkeyHex?.let { Nip19.npubEncode(it.hexToByteArray()) }
+            ?: keypair?.let { Nip19.npubEncode(it.pubkey) }
+    }
     var nsec by remember { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
