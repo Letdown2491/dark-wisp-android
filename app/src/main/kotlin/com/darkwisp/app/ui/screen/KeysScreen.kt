@@ -47,6 +47,7 @@ import androidx.fragment.app.FragmentActivity
 import com.darkwisp.app.R
 import com.darkwisp.app.nostr.Nip19
 import com.darkwisp.app.repo.KeyRepository
+import com.darkwisp.app.repo.SigningMode
 
 private fun android.content.Context.findFragmentActivity(): FragmentActivity? {
     var ctx = this
@@ -136,106 +137,137 @@ fun KeysScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Private key section
-            Text(
-                text = stringResource(R.string.settings_private_key),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (nsec != null) {
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            when (keyRepository.getSigningMode()) {
+                SigningMode.REMOTE -> {
+                    Text(
+                        text = stringResource(R.string.settings_private_key),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = nsec ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            text = "Signing is handled by a connected signer app. No private key is stored on this device.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(12.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(onClick = {
-                            nsec?.let { key ->
-                                val clip = ClipData.newPlainText("", key)
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    clip.description.extras = PersistableBundle().apply {
-                                        putBoolean("android.content.extra.IS_SENSITIVE", true)
-                                    }
-                                }
-                                val cm = context.getSystemService(ClipboardManager::class.java)
-                                cm.setPrimaryClip(clip)
-                                Toast.makeText(context, context.getString(R.string.settings_private_key_copied), Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Icon(
-                                Icons.Outlined.ContentCopy,
-                                contentDescription = stringResource(R.string.btn_copy),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
                     }
                 }
-            } else {
-                Button(
-                    onClick = {
-                        val activity = context.findFragmentActivity()
-                            ?: return@Button
+                SigningMode.READ_ONLY -> {
+                    Text(
+                        text = stringResource(R.string.settings_private_key),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "No private key is stored on this device.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                SigningMode.LOCAL -> {
+                    Text(
+                        text = stringResource(R.string.settings_private_key),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                        val biometricManager = BiometricManager.from(context)
-                        val canAuth = biometricManager.canAuthenticate(
-                            BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                        )
-                        if (canAuth != BiometricManager.BIOMETRIC_SUCCESS) {
-                            // No device lock set — reveal directly
-                            keypair?.let { nsec = Nip19.nsecEncode(it.privkey) }
-                            return@Button
-                        }
-
-                        val executor = ContextCompat.getMainExecutor(context)
-                        val callback = object : BiometricPrompt.AuthenticationCallback() {
-                            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                                keypair?.let { nsec = Nip19.nsecEncode(it.privkey) }
-                            }
-
-                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                                if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                                    errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON
-                                ) {
-                                    Toast.makeText(context, context.getString(R.string.settings_auth_failed, errString), Toast.LENGTH_SHORT).show()
+                    if (nsec != null) {
+                        OutlinedCard(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = nsec ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(onClick = {
+                                    nsec?.let { key ->
+                                        val clip = ClipData.newPlainText("", key)
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            clip.description.extras = PersistableBundle().apply {
+                                                putBoolean("android.content.extra.IS_SENSITIVE", true)
+                                            }
+                                        }
+                                        val cm = context.getSystemService(ClipboardManager::class.java)
+                                        cm.setPrimaryClip(clip)
+                                        Toast.makeText(context, context.getString(R.string.settings_private_key_copied), Toast.LENGTH_SHORT).show()
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.Outlined.ContentCopy,
+                                        contentDescription = stringResource(R.string.btn_copy),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
                         }
+                    } else {
+                        Button(
+                            onClick = {
+                                val activity = context.findFragmentActivity()
+                                    ?: return@Button
 
-                        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                            .setTitle(revealPrivateKeyTitle)
-                            .setDescription(revealPrivateKeyDescription)
-                            .setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-                            .build()
+                                val biometricManager = BiometricManager.from(context)
+                                val canAuth = biometricManager.canAuthenticate(
+                                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                                )
+                                if (canAuth != BiometricManager.BIOMETRIC_SUCCESS) {
+                                    keypair?.let { nsec = Nip19.nsecEncode(it.privkey) }
+                                    return@Button
+                                }
 
-                        BiometricPrompt(activity, executor, callback).authenticate(promptInfo)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Outlined.Visibility, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(stringResource(R.string.btn_reveal_private_key))
+                                val executor = ContextCompat.getMainExecutor(context)
+                                val callback = object : BiometricPrompt.AuthenticationCallback() {
+                                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                                        keypair?.let { nsec = Nip19.nsecEncode(it.privkey) }
+                                    }
+
+                                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                        if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                                            errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON
+                                        ) {
+                                            Toast.makeText(context, context.getString(R.string.settings_auth_failed, errString), Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+
+                                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                                    .setTitle(revealPrivateKeyTitle)
+                                    .setDescription(revealPrivateKeyDescription)
+                                    .setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                                    .build()
+
+                                BiometricPrompt(activity, executor, callback).authenticate(promptInfo)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Visibility, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_reveal_private_key))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(R.string.private_key_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = stringResource(R.string.private_key_warning),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
         }
     }
 }
