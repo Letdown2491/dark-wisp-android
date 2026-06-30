@@ -330,6 +330,7 @@ fun WispNavHost(
 
     val onAddAccount: () -> Unit = {
         if (anonMode != null) feedViewModel.exitAnonMode()
+        authViewModel.previousAccountPubkey = authViewModel.keyRepo.getPubkeyHex()
         authViewModel.isAddingAccount = true
         feedViewModel.resetForAccountSwitch()
         walletViewModel.suspendForAccountSwitch()  // disconnect only, preserve credentials
@@ -703,7 +704,28 @@ fun WispNavHost(
                 onLogIn = {
                     navController.navigate(Routes.AUTH)
                 },
-                onToggleTor = { feedViewModel.setTorEnabled(it) }
+                onToggleTor = { feedViewModel.setTorEnabled(it) },
+                onCancel = if (authViewModel.isAddingAccount) {
+                    {
+                        val prev = authViewModel.previousAccountPubkey
+                        authViewModel.isAddingAccount = false
+                        authViewModel.previousAccountPubkey = null
+                        if (anonMode != null) feedViewModel.exitAnonMode()
+                        if (prev != null) {
+                            authViewModel.keyRepo.switchToAccount(prev)
+                            authViewModel.keyRepo.reloadPrefs(prev)
+                        }
+                        feedViewModel.reloadForNewAccount()
+                        relayViewModel.reload()
+                        blossomServersViewModel.reload()
+                        composeViewModel.reloadBlossomRepo()
+                        feedViewModel.initRelays()
+                        walletViewModel.refreshState()
+                        navController.navigate(Routes.LOADING) {
+                            popUpTo(Routes.SPLASH) { inclusive = true }
+                        }
+                    }
+                } else null
             )
         }
 

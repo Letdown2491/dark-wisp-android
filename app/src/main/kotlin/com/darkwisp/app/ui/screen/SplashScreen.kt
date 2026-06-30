@@ -1,6 +1,7 @@
 package com.darkwisp.app.ui.screen
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -59,7 +60,8 @@ fun SplashScreen(
     viewModel: SplashViewModel,
     onSignUp: () -> Unit,
     onLogIn: () -> Unit,
-    onToggleTor: (Boolean) -> Unit = {}
+    onToggleTor: (Boolean) -> Unit = {},
+    onCancel: (() -> Unit)? = null
 ) {
     val profilePictures by viewModel.profilePictures.collectAsState()
     val liveMetrics by viewModel.liveMetrics.collectAsState()
@@ -122,6 +124,21 @@ fun SplashScreen(
                     )
                 )
         )
+
+        if (onCancel != null) {
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.labelLarge,
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f))
+                    .clickable(onClick = onCancel)
+                    .padding(horizontal = 28.dp, vertical = 12.dp)
+            )
+        }
 
         // Logo, tagline, and action buttons pinned to bottom
         Column(
