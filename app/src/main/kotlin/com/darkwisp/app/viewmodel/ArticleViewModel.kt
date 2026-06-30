@@ -3,6 +3,7 @@ package com.darkwisp.app.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.darkwisp.app.nostr.ClientMessage
+import com.darkwisp.app.nostr.CustomNip
 import com.darkwisp.app.nostr.Filter
 import com.darkwisp.app.nostr.Nip10
 import com.darkwisp.app.nostr.Nip57
@@ -38,6 +39,10 @@ class ArticleViewModel : ViewModel() {
 
     private val _hashtags = MutableStateFlow<List<String>>(emptyList())
     val hashtags: StateFlow<List<String>> = _hashtags
+
+    // Custom NIP (kind 30817) defined-kind chips, from `k` tags. Empty for ordinary articles.
+    private val _definedKinds = MutableStateFlow<List<CustomNip.DefinedKind>>(emptyList())
+    val definedKinds: StateFlow<List<CustomNip.DefinedKind>> = _definedKinds
 
     // Comments
     private val _comments = MutableStateFlow<List<Pair<NostrEvent, Int>>>(emptyList())
@@ -89,6 +94,7 @@ class ArticleViewModel : ViewModel() {
     }
 
     fun loadComments(
+        kind: Int,
         author: String,
         dTag: String,
         articleEventId: String?,
@@ -107,7 +113,7 @@ class ArticleViewModel : ViewModel() {
         this.relayHintStoreRef = relayHintStore
         _isCommentsLoading.value = true
 
-        val coordinate = "30023:$author:$dTag"
+        val coordinate = "$kind:$author:$dTag"
         val commentSubId = "article-comments"
         activeSubIds.add(commentSubId)
 
@@ -365,6 +371,8 @@ class ArticleViewModel : ViewModel() {
         _coverImage.value = event.tags.firstOrNull { it.size >= 2 && it[0] == "image" }?.get(1)
         _publishedAt.value = event.tags.firstOrNull { it.size >= 2 && it[0] == "published_at" }?.get(1)?.toLongOrNull()
         _hashtags.value = event.tags.filter { it.size >= 2 && it[0] == "t" }.map { it[1] }
+        _definedKinds.value =
+            if (event.kind == CustomNip.KIND) CustomNip.parseDefinedKinds(event) else emptyList()
         _isLoading.value = false
     }
 

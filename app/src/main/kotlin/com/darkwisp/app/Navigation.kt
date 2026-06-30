@@ -191,7 +191,8 @@ fun NostrUriData.toRoute(): String? = when (this) {
     is NostrUriData.ProfileRef -> "profile/$pubkey"
     is NostrUriData.NoteRef -> "thread/$eventId"
     is NostrUriData.AddressRef ->
-        if (kind == 30023 && author != null) "article/$kind/$author/$dTag" else null
+        if ((kind == 30023 || kind == com.darkwisp.app.nostr.CustomNip.KIND) && author != null)
+            "article/$kind/$author/$dTag" else null
 }
 
 @Composable
@@ -2423,6 +2424,7 @@ fun WispNavHost(
                 articleViewModel.loadArticle(kind, author, dTag, feedViewModel.eventRepo)
                 val articleEvent = feedViewModel.eventRepo.findAddressableEvent(kind, author, dTag)
                 articleViewModel.loadComments(
+                    kind = kind,
                     author = author,
                     dTag = dTag,
                     articleEventId = articleEvent?.id,
