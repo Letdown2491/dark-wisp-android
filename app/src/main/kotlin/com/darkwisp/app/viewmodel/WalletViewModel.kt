@@ -30,7 +30,6 @@ import com.darkwisp.app.repo.NwcRepository
 import com.darkwisp.app.repo.SparkRepository
 import com.darkwisp.app.repo.WalletMode
 import com.darkwisp.app.repo.WalletModeRepository
-import com.darkwisp.app.repo.OnchainFeeQuote
 import com.darkwisp.app.repo.WalletProvider
 import android.util.Log
 import com.darkwisp.app.repo.WalletTransaction
@@ -126,14 +125,6 @@ sealed class WalletPage {
     data class SendResult(val success: Boolean, val message: String) : WalletPage()
     object ReceiveAmount : WalletPage()
     data class ReceiveInvoice(val invoice: String, val amountSats: Long) : WalletPage()
-    data class OnchainSendAmount(val address: String) : WalletPage()
-    data class OnchainSendConfirm(
-        val address: String,
-        val amountSats: Long,
-        val feeQuote: OnchainFeeQuote,
-        val prepareData: Any
-    ) : WalletPage()
-    data class OnchainSendResult(val success: Boolean, val paymentId: String?, val message: String) : WalletPage()
     data class ReceiveSuccess(val amountSats: Long) : WalletPage()
     object Transactions : WalletPage()
     object Settings : WalletPage()
@@ -204,25 +195,6 @@ class WalletViewModel(
     // Receive flow
     private val _receiveAmount = MutableStateFlow("")
     val receiveAmount: StateFlow<String> = _receiveAmount
-
-    // On-chain deposit address (Spark only)
-    private val _depositAddress = MutableStateFlow<String?>(null)
-    val depositAddress: StateFlow<String?> = _depositAddress
-
-    private val _depositAddressLoading = MutableStateFlow(false)
-    val depositAddressLoading: StateFlow<Boolean> = _depositAddressLoading
-
-    private val _depositAddressError = MutableStateFlow<String?>(null)
-    val depositAddressError: StateFlow<String?> = _depositAddressError
-
-    // On-chain send (Spark only)
-    private val _onchainFeeQuote = MutableStateFlow<OnchainFeeQuote?>(null)
-    val onchainFeeQuote: StateFlow<OnchainFeeQuote?> = _onchainFeeQuote
-
-    private var _onchainPrepareData: Any? = null
-
-    private val _onchainSendLoading = MutableStateFlow(false)
-    val onchainSendLoading: StateFlow<Boolean> = _onchainSendLoading
 
     // Transactions
     private val _transactions = MutableStateFlow<List<WalletTransaction>>(emptyList())
@@ -346,11 +318,6 @@ class WalletViewModel(
         // would otherwise stay at the prior wallet's acknowledged value
         // until the next refreshState() call.
         _seedBackupAcked.value = false
-        _depositAddress.value = null
-        _depositAddressError.value = null
-        _depositAddressLoading.value = false
-        _onchainFeeQuote.value = null
-        _onchainPrepareData = null
     }
 
     /**
@@ -577,8 +544,6 @@ class WalletViewModel(
         _deleteConfirmText.value = ""
         _lightningAddressError.value = null
         _addressAvailable.value = null
-        _onchainFeeQuote.value = null
-        _onchainPrepareData = null
     }
 
     val isOnHome: Boolean get() = pageStack.size <= 1
@@ -1301,14 +1266,6 @@ class WalletViewModel(
         }
     }
 
-    private fun isBtcAddress(s: String): Boolean {
-        val lower = s.lowercase()
-        if (lower.startsWith("bc1") && s.length >= 14) return true
-        if ((s.startsWith("1") || s.startsWith("3")) && s.length in 26..35 &&
-            s.all { it.isLetterOrDigit() && it != '0' && it != 'O' && it != 'I' && it != 'l' }) return true
-        return false
-    }
-
     fun processInput(input: String = _sendInput.value) {
         val trimmed = input.trim()
             .removePrefix("lightning:").removePrefix("LIGHTNING:")
@@ -1333,10 +1290,6 @@ class WalletViewModel(
                     navigateTo(WalletPage.SendAmount(noffer.raw))
                 }
             }
-            _walletMode.value == WalletMode.SPARK && isBtcAddress(trimmed) -> {
-                clearOnchainQuote()
-                navigateTo(WalletPage.OnchainSendAmount(trimmed))
-            }
             trimmed.lowercase().startsWith("lnbc") -> {
                 val decoded = Bolt11.decode(trimmed)
                 if (decoded == null) {
@@ -1359,10 +1312,7 @@ class WalletViewModel(
                 navigateTo(WalletPage.SendAmount(trimmed))
             }
             else -> {
-                _sendError.value = if (_walletMode.value == WalletMode.SPARK)
-                    "Enter a lightning address, BOLT11 invoice, CLINK offer, or Bitcoin address"
-                else
-                    "Enter a lightning address (user@domain), BOLT11 invoice, or CLINK offer"
+                _sendError.value = "Enter a lightning address (user@domain), BOLT11 invoice, or CLINK offer"
             }
         }
     }
@@ -1549,74 +1499,6 @@ class WalletViewModel(
                 },
                 onFailure = { e ->
                     _sendError.value = e.message ?: "Failed to create invoice"
-                }
-            )
-            _isLoading.value = false
-        }
-    }
-
-    // --- On-chain receive (Spark only) ---
-
-    fun loadDepositAddress(force: Boolean = false) {
-        if (!force && _depositAddress.value != null) return
-        _depositAddressLoading.value = true
-        _depositAddressError.value = null
-        viewModelScope.launch {
-            sparkRepo.getDepositAddress().fold(
-                onSuccess = { address -> _depositAddress.value = address },
-                onFailure = { e -> _depositAddressError.value = e.message ?: "Failed to load address" }
-            )
-            _depositAddressLoading.value = false
-        }
-    }
-
-    // --- On-chain send (Spark only) ---
-
-    fun clearOnchainQuote() {
-        _onchainFeeQuote.value = null
-        _onchainPrepareData = null
-    }
-
-    fun prepareOnchainSend(address: String, amountSats: Long) {
-        clearOnchainQuote()
-        _onchainSendLoading.value = true
-        _sendError.value = null
-        viewModelScope.launch {
-            sparkRepo.prepareOnchainSend(address, amountSats).fold(
-                onSuccess = { (quote, prepareData) ->
-                    _onchainFeeQuote.value = quote
-                    _onchainPrepareData = prepareData
-                },
-                onFailure = { e -> _sendError.value = e.message ?: "Failed to estimate fee" }
-            )
-            _onchainSendLoading.value = false
-        }
-    }
-
-    fun continueToOnchainConfirm(address: String, amountSats: Long) {
-        val quote = _onchainFeeQuote.value ?: return
-        val prepareData = _onchainPrepareData ?: return
-        navigateTo(WalletPage.OnchainSendConfirm(address, amountSats, quote, prepareData))
-    }
-
-    fun sendOnchain(prepareData: Any) {
-        if (_isLoading.value) return
-        _isLoading.value = true
-        viewModelScope.launch {
-            sparkRepo.sendOnchain(prepareData).fold(
-                onSuccess = { paymentId ->
-                    pageStack.removeAt(pageStack.lastIndex)
-                    val resultPage = WalletPage.OnchainSendResult(true, paymentId, "Bitcoin sent!")
-                    pageStack.add(resultPage)
-                    _currentPage.value = resultPage
-                    clearOnchainQuote()
-                    refreshBalance()
-                },
-                onFailure = { e ->
-                    pageStack.removeAt(pageStack.lastIndex)
-                    val resultPage = WalletPage.OnchainSendResult(false, null, e.message ?: "Send failed")
-                    pageStack.add(resultPage)
-                    _currentPage.value = resultPage
                 }
             )
             _isLoading.value = false
