@@ -94,6 +94,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -190,6 +191,22 @@ import com.darkwisp.app.viewmodel.WalletPage
 import com.darkwisp.app.viewmodel.WalletState
 import com.darkwisp.app.viewmodel.WalletViewModel
 
+// Full-screen wallet bottom sheets (Transactions, Send, Receive) expand all
+// the way to the top of the window — push the grab handle below the status
+// bar/camera cutout so it isn't visually clipped by device chrome.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WalletSheetDragHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        BottomSheetDefaults.DragHandle()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WalletScreen(
@@ -216,7 +233,26 @@ fun WalletScreen(
         currentPage is WalletPage.ModeSelection ||
         currentPage is WalletPage.NwcSetup ||
         currentPage is WalletPage.SparkSetup ||
-        currentPage is WalletPage.SparkRestoreSeed
+        currentPage is WalletPage.SparkRestoreSeed ||
+        currentPage is WalletPage.SendInput ||
+        currentPage is WalletPage.SendAmount ||
+        currentPage is WalletPage.SendConfirm ||
+        currentPage is WalletPage.Sending ||
+        currentPage is WalletPage.SendResult ||
+        currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveInvoice ||
+        currentPage is WalletPage.ReceiveSuccess
+
+    // Send and Receive each render as a full-screen bottom sheet over the
+    // Home dashboard, matching the Transactions sheet treatment.
+    val isSendFlow = currentPage is WalletPage.SendInput ||
+        currentPage is WalletPage.SendAmount ||
+        currentPage is WalletPage.SendConfirm ||
+        currentPage is WalletPage.Sending ||
+        currentPage is WalletPage.SendResult
+    val isReceiveFlow = currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveInvoice ||
+        currentPage is WalletPage.ReceiveSuccess
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -429,15 +465,6 @@ fun WalletScreen(
                             modifier = Modifier.padding(padding)
                         )
                     }
-                    is WalletPage.SendInput -> SendInputContent(
-                        input = viewModel.sendInput.collectAsState().value,
-                        error = viewModel.sendError.collectAsState().value,
-                        walletMode = viewModel.walletMode.collectAsState().value,
-                        onInputChange = { viewModel.updateSendInput(it) },
-                        onNext = { viewModel.processInput() },
-                        onScanQR = { viewModel.navigateTo(WalletPage.ScanQR) },
-                        modifier = Modifier.padding(padding)
-                    )
                     is WalletPage.ScanQR -> ScanQRContent(
                         onResult = { scanned ->
                             viewModel.updateSendInput(scanned)
@@ -445,85 +472,81 @@ fun WalletScreen(
                         },
                         modifier = Modifier.padding(padding)
                     )
-                    is WalletPage.SendAmount -> {
-                        val page = currentPage as WalletPage.SendAmount
-                        // For a CLINK offer, show the service's profile name
-                        // instead of the raw noffer string.
-                        val nofferPayee = remember(page.address) {
-                            com.darkwisp.app.nostr.Noffer.decodeOrNull(page.address)
-                                ?.let { viewModel.getProfileData(it.pubkey)?.displayString }
-                        }
-                        SendAmountContent(
-                            address = nofferPayee ?: page.address,
-                            amount = viewModel.sendAmount.collectAsState().value,
-                            error = viewModel.sendError.collectAsState().value,
-                            isLoading = viewModel.isLoading.collectAsState().value,
-                            onDigit = { viewModel.updateSendAmount(it) },
-                            onBackspace = { viewModel.sendAmountBackspace() },
-                            onConfirm = {
-                                val sats = viewModel.sendAmount.value.toLongOrNull() ?: return@SendAmountContent
-                                viewModel.resolveLightningAddress(page.address, sats)
-                            },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
-                    is WalletPage.SendConfirm -> {
-                        val page = currentPage as WalletPage.SendConfirm
-                        val feeState by viewModel.feeState.collectAsState()
-                        val walletMode by viewModel.walletMode.collectAsState()
-                        LaunchedEffect(page.invoice) {
-                            viewModel.prepareFee(page.invoice)
-                        }
-                        SendConfirmContent(
-                            invoice = page.invoice,
-                            amountSats = page.amountSats,
-                            description = page.description,
-                            feeState = feeState,
-                            networkName = when (walletMode) {
-                                WalletMode.SPARK -> "Spark"
-                                WalletMode.NWC -> "NWC"
-                                else -> "Unknown"
-                            },
-                            onPay = { viewModel.payInvoice(page.invoice) },
-                            onCancel = { viewModel.navigateBack() },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
-                    is WalletPage.Sending -> SendingContent(
-                        modifier = Modifier.padding(padding)
-                    )
+                    is WalletPage.SendInput,
+                    is WalletPage.SendAmount,
+                    is WalletPage.SendConfirm,
+                    is WalletPage.Sending,
                     is WalletPage.SendResult -> {
-                        val page = currentPage as WalletPage.SendResult
-                        SendResultContent(
-                            success = page.success,
-                            message = page.message,
-                            onDone = { viewModel.navigateHome() },
+                        // Home stays visible behind the send bottom sheet.
+                        val profileKey = viewModel.profileRefreshKey.collectAsState().value
+                        WalletHomeContent(
+                            balanceMsats = balanceMsats,
+                            walletMode = viewModel.walletMode.collectAsState().value,
+                            balanceUnit = viewModel.balanceUnit.collectAsState().value,
+                            showSettingsAlert = viewModel.walletMode.collectAsState().value == WalletMode.SPARK
+                                    && !viewModel.seedBackupAcked.collectAsState().value,
+                            seedBackupAcked = viewModel.seedBackupAcked.collectAsState().value,
+                            backupMissing = viewModel.backupMissing.collectAsState().value,
+                            onSend = {},
+                            onReceive = { viewModel.navigateTo(WalletPage.ReceiveAmount) },
+                            onTransactions = {
+                                viewModel.loadTransactions()
+                                viewModel.navigateTo(WalletPage.Transactions)
+                            },
+                            onRefresh = { viewModel.refreshBalance() },
+                            onSettings = { viewModel.navigateTo(WalletPage.Settings) },
+                            onBackupToRelay = {
+                                viewModel.resetBackupStatus()
+                                viewModel.navigateTo(WalletPage.BackupToRelay)
+                            },
+                            onViewSeed = { viewModel.showMnemonicBackup() },
+                            lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                            onSetupAddress = {
+                                viewModel.resetAddressSetupState()
+                                viewModel.navigateTo(WalletPage.LightningAddressSetup)
+                            },
+                            recentTransactions = viewModel.transactions.collectAsState().value,
+                            profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
+                            pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
                     }
-                    is WalletPage.ReceiveAmount -> ReceiveAmountContent(
-                        amount = viewModel.receiveAmount.collectAsState().value,
-                        isLoading = viewModel.isLoading.collectAsState().value,
-                        lightningAddress = viewModel.lightningAddress.collectAsState().value,
-                        onAmountChange = { viewModel.setReceiveAmount(it) },
-                        onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) },
-                        onShowAddressQR = { viewModel.navigateTo(WalletPage.LightningAddressQR) },
-                        modifier = Modifier.padding(padding)
-                    )
-                    is WalletPage.ReceiveInvoice -> {
-                        val page = currentPage as WalletPage.ReceiveInvoice
-                        ReceiveInvoiceContent(
-                            invoice = page.invoice,
-                            amountSats = page.amountSats,
-                            onDone = { viewModel.navigateHome() },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
+                    is WalletPage.ReceiveAmount,
+                    is WalletPage.ReceiveInvoice,
                     is WalletPage.ReceiveSuccess -> {
-                        val page = currentPage as WalletPage.ReceiveSuccess
-                        ReceiveSuccessContent(
-                            amountSats = page.amountSats,
-                            onDone = { viewModel.navigateHome() },
+                        // Home stays visible behind the receive bottom sheet.
+                        val profileKey = viewModel.profileRefreshKey.collectAsState().value
+                        WalletHomeContent(
+                            balanceMsats = balanceMsats,
+                            walletMode = viewModel.walletMode.collectAsState().value,
+                            balanceUnit = viewModel.balanceUnit.collectAsState().value,
+                            showSettingsAlert = viewModel.walletMode.collectAsState().value == WalletMode.SPARK
+                                    && !viewModel.seedBackupAcked.collectAsState().value,
+                            seedBackupAcked = viewModel.seedBackupAcked.collectAsState().value,
+                            backupMissing = viewModel.backupMissing.collectAsState().value,
+                            onSend = { viewModel.navigateTo(WalletPage.SendInput) },
+                            onReceive = {},
+                            onTransactions = {
+                                viewModel.loadTransactions()
+                                viewModel.navigateTo(WalletPage.Transactions)
+                            },
+                            onRefresh = { viewModel.refreshBalance() },
+                            onSettings = { viewModel.navigateTo(WalletPage.Settings) },
+                            onBackupToRelay = {
+                                viewModel.resetBackupStatus()
+                                viewModel.navigateTo(WalletPage.BackupToRelay)
+                            },
+                            onViewSeed = { viewModel.showMnemonicBackup() },
+                            lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                            onSetupAddress = {
+                                viewModel.resetAddressSetupState()
+                                viewModel.navigateTo(WalletPage.LightningAddressSetup)
+                            },
+                            recentTransactions = viewModel.transactions.collectAsState().value,
+                            profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
+                            pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -683,6 +706,7 @@ fun WalletScreen(
                     ModalBottomSheet(
                         onDismissRequest = { viewModel.navigateBack() },
                         sheetState = txSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
                     ) {
                         TransactionHistoryContent(
                             transactions = viewModel.transactions.collectAsState().value,
@@ -695,6 +719,108 @@ fun WalletScreen(
                             profileRefreshKey = txProfileKey,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
                         )
+                    }
+                }
+
+                // Send flow full-screen bottom sheet — swipe down to dismiss back to Home.
+                // Content swaps internally as the user moves through SendInput →
+                // SendAmount → SendConfirm → Sending → SendResult so the sheet
+                // itself never closes and reopens mid-flow.
+                if (isSendFlow) {
+                    val sendSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.navigateHome() },
+                        sheetState = sendSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
+                    ) {
+                        when (val page = currentPage) {
+                            is WalletPage.SendInput -> SendInputContent(
+                                input = viewModel.sendInput.collectAsState().value,
+                                error = viewModel.sendError.collectAsState().value,
+                                walletMode = viewModel.walletMode.collectAsState().value,
+                                onInputChange = { viewModel.updateSendInput(it) },
+                                onNext = { viewModel.processInput() },
+                                onScanQR = { viewModel.navigateTo(WalletPage.ScanQR) }
+                            )
+                            is WalletPage.SendAmount -> {
+                                // For a CLINK offer, show the service's profile name
+                                // instead of the raw noffer string.
+                                val nofferPayee = remember(page.address) {
+                                    com.darkwisp.app.nostr.Noffer.decodeOrNull(page.address)
+                                        ?.let { viewModel.getProfileData(it.pubkey)?.displayString }
+                                }
+                                SendAmountContent(
+                                    address = nofferPayee ?: page.address,
+                                    amount = viewModel.sendAmount.collectAsState().value,
+                                    error = viewModel.sendError.collectAsState().value,
+                                    isLoading = viewModel.isLoading.collectAsState().value,
+                                    onDigit = { viewModel.updateSendAmount(it) },
+                                    onBackspace = { viewModel.sendAmountBackspace() },
+                                    onConfirm = {
+                                        val sats = viewModel.sendAmount.value.toLongOrNull() ?: return@SendAmountContent
+                                        viewModel.resolveLightningAddress(page.address, sats)
+                                    }
+                                )
+                            }
+                            is WalletPage.SendConfirm -> {
+                                val feeState by viewModel.feeState.collectAsState()
+                                val walletMode by viewModel.walletMode.collectAsState()
+                                LaunchedEffect(page.invoice) {
+                                    viewModel.prepareFee(page.invoice)
+                                }
+                                SendConfirmContent(
+                                    invoice = page.invoice,
+                                    amountSats = page.amountSats,
+                                    description = page.description,
+                                    feeState = feeState,
+                                    networkName = when (walletMode) {
+                                        WalletMode.SPARK -> "Spark"
+                                        WalletMode.NWC -> "NWC"
+                                        else -> "Unknown"
+                                    },
+                                    onPay = { viewModel.payInvoice(page.invoice) },
+                                    onCancel = { viewModel.navigateBack() }
+                                )
+                            }
+                            is WalletPage.Sending -> SendingContent()
+                            is WalletPage.SendResult -> SendResultContent(
+                                success = page.success,
+                                message = page.message,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            else -> {}
+                        }
+                    }
+                }
+
+                // Receive flow full-screen bottom sheet — swipe down to dismiss back to Home.
+                if (isReceiveFlow) {
+                    val receiveSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.navigateHome() },
+                        sheetState = receiveSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
+                    ) {
+                        when (val page = currentPage) {
+                            is WalletPage.ReceiveAmount -> ReceiveAmountContent(
+                                amount = viewModel.receiveAmount.collectAsState().value,
+                                isLoading = viewModel.isLoading.collectAsState().value,
+                                lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                                onAmountChange = { viewModel.setReceiveAmount(it) },
+                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) },
+                                onShowAddressQR = { viewModel.navigateTo(WalletPage.LightningAddressQR) }
+                            )
+                            is WalletPage.ReceiveInvoice -> ReceiveInvoiceContent(
+                                invoice = page.invoice,
+                                amountSats = page.amountSats,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            is WalletPage.ReceiveSuccess -> ReceiveSuccessContent(
+                                amountSats = page.amountSats,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            else -> {}
+                        }
                     }
                 }
             }
