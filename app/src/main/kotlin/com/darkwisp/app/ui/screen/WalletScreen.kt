@@ -807,8 +807,7 @@ fun WalletScreen(
                                 isLoading = viewModel.isLoading.collectAsState().value,
                                 lightningAddress = viewModel.lightningAddress.collectAsState().value,
                                 onAmountChange = { viewModel.setReceiveAmount(it) },
-                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) },
-                                onShowAddressQR = { viewModel.navigateTo(WalletPage.LightningAddressQR) }
+                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) }
                             )
                             is WalletPage.ReceiveInvoice -> ReceiveInvoiceContent(
                                 invoice = page.invoice,
@@ -2356,7 +2355,6 @@ private fun ReceiveAmountContent(
     lightningAddress: String?,
     onAmountChange: (String) -> Unit,
     onGenerate: (Long, String, Int) -> Unit,
-    onShowAddressQR: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val receiveCtx = LocalContext.current
@@ -2373,6 +2371,7 @@ private fun ReceiveAmountContent(
     val satAmount: Long? = if (fiatMode) fiatSats else amount.toLongOrNull()
 
     var description by remember { mutableStateOf("") }
+    var showAddressQR by remember { mutableStateOf(false) }
     var selectedExpiry by remember { mutableStateOf(InvoiceExpiry.ONE_HOUR) }
     var customHours by remember { mutableStateOf("") }
     val expirySecs = when (selectedExpiry) {
@@ -2385,12 +2384,27 @@ private fun ReceiveAmountContent(
 
     val fieldShape = RoundedCornerShape(14.dp)
     val fieldBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    val scrollState = rememberScrollState()
+    var invoiceGenerating by remember { mutableStateOf(false) }
+
+    // The shared isLoading flag can flip true from unrelated wallet
+    // operations, so track invoice creation locally to avoid showing a
+    // spinner just because the sheet opened while isLoading happened to be true.
+    LaunchedEffect(isLoading) { if (!isLoading) invoiceGenerating = false }
+
+    // Scroll to the QR card once AnimatedVisibility has expanded and laid out.
+    LaunchedEffect(showAddressQR) {
+        if (showAddressQR) {
+            kotlinx.coroutines.delay(350)
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
     ) {
         Spacer(Modifier.height(8.dp))
 
@@ -2566,7 +2580,7 @@ private fun ReceiveAmountContent(
 
         Spacer(Modifier.height(24.dp))
 
-        if (isLoading) {
+        if (invoiceGenerating) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2591,6 +2605,7 @@ private fun ReceiveAmountContent(
             Button(
                 onClick = {
                     val sats = satAmount ?: return@Button
+                    invoiceGenerating = true
                     onGenerate(sats, description, expirySecs)
                 },
                 enabled = canCreate,
@@ -2616,7 +2631,61 @@ private fun ReceiveAmountContent(
         // Lightning address — shown below invoice form as "or receive via" row
         if (!lightningAddress.isNullOrBlank()) {
             Spacer(Modifier.height(24.dp))
-            LightningAddressReceiveRow(address = lightningAddress, onShowQR = onShowAddressQR)
+            LightningAddressReceiveRow(
+                address = lightningAddress,
+                onShowQR = { showAddressQR = !showAddressQR }
+            )
+            AnimatedVisibility(visible = showAddressQR) {
+                val clipboardManager = LocalClipboardManager.current
+                val qrBitmap = remember(lightningAddress) {
+                    val writer = QRCodeWriter()
+                    val matrix = writer.encode(lightningAddress, BarcodeFormat.QR_CODE, 512, 512)
+                    val bmp = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565)
+                    for (x in 0 until matrix.width) {
+                        for (y in 0 until matrix.height) {
+                            bmp.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                        }
+                    }
+                    bmp
+                }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .padding(20.dp)
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = stringResource(R.string.cd_invoice_qr_code),
+                        modifier = Modifier
+                            .size(240.dp)
+                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            lightningAddress,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { clipboardManager.setText(AnnotatedString(lightningAddress)) }) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.wallet_copy_address),
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(24.dp))
