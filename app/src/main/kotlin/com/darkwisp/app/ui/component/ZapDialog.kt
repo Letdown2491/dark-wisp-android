@@ -602,38 +602,85 @@ fun ZapDialog(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bolt),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        if (fiatMode) "Instant payments" else "Instant zaps",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Switch(
-                        checked = instantZapsEnabled,
-                        onCheckedChange = {
-                            instantZapsEnabled = it
-                            interfacePrefs.setQuickZapEnabled(it)
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = accent,
-                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.surface
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_bolt),
+                            contentDescription = null,
+                            tint = if (instantZapsEnabled) accent else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(16.dp)
                         )
-                    )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            if (fiatMode) "Instant payments" else "Instant zaps",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Switch(
+                            checked = instantZapsEnabled,
+                            onCheckedChange = {
+                                instantZapsEnabled = it
+                                interfacePrefs.setQuickZapEnabled(it)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = accent,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
+                            )
+                        )
+                    }
+                    if (instantZapsEnabled) {
+                        val instantSats = interfacePrefs.getQuickZapAmountSats()
+                        val instantMsg = interfacePrefs.getQuickZapMessage()
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                            thickness = 0.5.dp
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "%,d sats".format(instantSats),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = accent
+                                )
+                                if (instantMsg.isNotBlank()) {
+                                    Text(
+                                        "·",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        instantMsg,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Text(
+                                "configure in Presets",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -746,10 +793,13 @@ fun ZapDialog(
         EditPresetsSheet(
             initial = presets,
             accent = accent,
+            interfacePrefs = interfacePrefs,
             onDismiss = { showEditPresetsSheet = false },
             onSave = { newList ->
                 zapPrefsRepo.setPresets(newList)
                 presets = newList.sortedBy { it.amountSats }
+                // Refresh the in-sheet toggle in case Edit Presets changed it
+                instantZapsEnabled = interfacePrefs.isQuickZapEnabled()
                 showEditPresetsSheet = false
             }
         )
@@ -1041,6 +1091,7 @@ internal fun friendlyZapErrorMessage(raw: String?): String {
 private fun EditPresetsSheet(
     initial: List<ZapPreset>,
     accent: Color,
+    interfacePrefs: com.darkwisp.app.repo.InterfacePreferences,
     onDismiss: () -> Unit,
     onSave: (List<ZapPreset>) -> Unit
 ) {
@@ -1052,12 +1103,27 @@ private fun EditPresetsSheet(
     var rows by remember {
         mutableStateOf(initial.map { EditableRow(it.amountSats.toString(), it.message) })
     }
+    var instantEnabled by remember { mutableStateOf(interfacePrefs.isQuickZapEnabled()) }
+    // Track the instant-zap amount by row index so it follows row edits.
+    var instantIdx by remember {
+        val savedSats = interfacePrefs.getQuickZapAmountSats()
+        val idx = initial.indexOfFirst { it.amountSats == savedSats }
+        mutableStateOf(if (idx >= 0) idx else 0)
+    }
     fun closeSheet(commit: Boolean) {
         scope.launch { sheetState.hide() }.invokeOnCompletion {
             if (commit) {
                 val parsed = rows.mapNotNull { r ->
                     val sats = r.amount.toLongOrNull() ?: return@mapNotNull null
                     if (sats <= 0) null else ZapPreset(sats, r.message.trim())
+                }
+                // Persist instant-zap settings — the selected preset becomes
+                // the amount/message fired on long-press.
+                interfacePrefs.setQuickZapEnabled(instantEnabled)
+                val safeIdx = instantIdx.coerceIn(0, (parsed.size - 1).coerceAtLeast(0))
+                parsed.getOrNull(safeIdx)?.let { preset ->
+                    interfacePrefs.setQuickZapAmountSats(preset.amountSats)
+                    interfacePrefs.setQuickZapMessage(preset.message)
                 }
                 onSave(parsed)
             } else {
@@ -1103,6 +1169,51 @@ private fun EditPresetsSheet(
                     borderColor = accent.copy(alpha = 0.45f)
                 )
             }
+            Spacer(Modifier.height(16.dp))
+
+            // ── Instant zap toggle ──────────────────────────────────
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_bolt),
+                        contentDescription = null,
+                        tint = if (instantEnabled) accent else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Instant zaps",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "Long-press the bolt to send the selected preset instantly",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = instantEnabled,
+                        onCheckedChange = { instantEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = accent,
+                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
 
             Surface(
@@ -1122,10 +1233,12 @@ private fun EditPresetsSheet(
                         // row doesn't leak its dismiss state into the next
                         // row sliding into its position.
                         val rowKey = remember { java.util.UUID.randomUUID().toString() }
+                        val isInstantRow = instantEnabled && idx == instantIdx
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { target ->
                                 if (target == SwipeToDismissBoxValue.EndToStart) {
                                     rows = rows.toMutableList().also { it.removeAt(idx) }
+                                    if (instantIdx >= rows.size) instantIdx = (rows.size - 1).coerceAtLeast(0)
                                     true
                                 } else false
                             }
@@ -1220,6 +1333,18 @@ private fun EditPresetsSheet(
                                         }
                                     },
                                     modifier = Modifier.weight(1f)
+                                )
+                                // Radio button — tap to designate the instant-zap preset
+                                androidx.compose.material3.RadioButton(
+                                    selected = isInstantRow,
+                                    onClick = { if (instantEnabled) instantIdx = idx },
+                                    enabled = instantEnabled,
+                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                                        selectedColor = accent,
+                                        unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        disabledSelectedColor = accent.copy(alpha = 0.4f),
+                                        disabledUnselectedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+                                    )
                                 )
                             }
                         }
