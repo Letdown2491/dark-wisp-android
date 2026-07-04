@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.darkwisp.app.repo.EventRepository
 import com.darkwisp.app.ui.component.ProfilePicture
+import com.darkwisp.app.nostr.CustomNip
 import com.darkwisp.app.nostr.Nip30
 import com.darkwisp.app.nostr.NostrEvent
 import com.darkwisp.app.ui.component.ActionBar
@@ -96,6 +98,7 @@ fun ArticleScreen(
     val coverImage by viewModel.coverImage.collectAsState()
     val publishedAt by viewModel.publishedAt.collectAsState()
     val hashtags by viewModel.hashtags.collectAsState()
+    val definedKinds by viewModel.definedKinds.collectAsState()
     val comments by viewModel.comments.collectAsState()
     val isCommentsLoading by viewModel.isCommentsLoading.collectAsState()
 
@@ -125,7 +128,7 @@ fun ArticleScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = title ?: "Article",
+                        text = title ?: if (article?.kind == CustomNip.KIND) "NIP" else "Article",
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -214,6 +217,22 @@ fun ArticleScreen(
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
+                                    }
+                                }
+                            }
+
+                            if (definedKinds.isNotEmpty()) {
+                                Spacer(Modifier.height(12.dp))
+                                FlowRow {
+                                    definedKinds.forEach { dk ->
+                                        val label = if (dk.name.isNotBlank()) "kind ${dk.num} · ${dk.name}"
+                                                    else "kind ${dk.num}"
+                                        AssistChip(
+                                            onClick = {},
+                                            enabled = false,
+                                            label = { Text(label) },
+                                            modifier = Modifier.padding(end = 6.dp)
+                                        )
                                     }
                                 }
                             }

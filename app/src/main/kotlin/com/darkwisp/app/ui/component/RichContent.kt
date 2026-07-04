@@ -1054,9 +1054,10 @@ fun RichContent(
                                     )
                                 }
                             }
-                            kind == 30023 -> {
+                            kind == 30023 || kind == com.darkwisp.app.nostr.CustomNip.KIND -> {
                                 if (eventRepo != null && segment.author != null) {
                                     ArticleCard(
+                                        kind = kind,
                                         dTag = segment.dTag,
                                         author = segment.author,
                                         relayHints = segment.relays,
@@ -1501,6 +1502,7 @@ private fun UnsupportedKindBadge(kind: Int?, style: TextStyle) {
 
 @Composable
 private fun ArticleCard(
+    kind: Int,
     dTag: String,
     author: String,
     relayHints: List<String>,
@@ -1509,14 +1511,14 @@ private fun ArticleCard(
     onProfileClick: ((String) -> Unit)?
 ) {
     val version by eventRepo.quotedEventVersion.collectAsState()
-    val event = remember(author, dTag, version) {
-        eventRepo.findAddressableEvent(30023, author, dTag)
+    val event = remember(kind, author, dTag, version) {
+        eventRepo.findAddressableEvent(kind, author, dTag)
     }
     val profile = remember(author, version) { eventRepo.getProfileData(author) }
 
-    LaunchedEffect(author, dTag) {
-        if (eventRepo.findAddressableEvent(30023, author, dTag) == null) {
-            eventRepo.requestAddressableEvent(30023, author, dTag, relayHints)
+    LaunchedEffect(kind, author, dTag) {
+        if (eventRepo.findAddressableEvent(kind, author, dTag) == null) {
+            eventRepo.requestAddressableEvent(kind, author, dTag, relayHints)
         }
     }
 
@@ -1533,7 +1535,7 @@ private fun ArticleCard(
             .fillMaxWidth()
             .padding(vertical = 6.dp)
             .then(
-                if (onArticleClick != null) Modifier.clickable { onArticleClick(30023, author, dTag) }
+                if (onArticleClick != null) Modifier.clickable { onArticleClick(kind, author, dTag) }
                 else Modifier
             )
     ) {
@@ -1577,14 +1579,14 @@ private fun ArticleCard(
                             modifier = Modifier.padding(end = 8.dp)
                         ) {
                             Text(
-                                text = "ARTICLE",
+                                text = if (kind == com.darkwisp.app.nostr.CustomNip.KIND) "NIP" else "ARTICLE",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                         Text(
-                            text = title ?: "Untitled Article",
+                            text = title ?: if (kind == com.darkwisp.app.nostr.CustomNip.KIND) "Untitled NIP" else "Untitled Article",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2,
