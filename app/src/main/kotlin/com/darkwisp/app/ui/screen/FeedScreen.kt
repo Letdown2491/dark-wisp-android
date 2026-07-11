@@ -171,6 +171,7 @@ fun FeedScreen(
     accounts: List<AccountInfo> = emptyList(),
     onSwitchAccount: (String) -> Unit = {},
     onAddAccount: () -> Unit = {},
+    onMoveAccount: (pubkeyHex: String, offset: Int) -> Unit = { _, _ -> },
     onLogout: () -> Unit = {},
     hasEmbeddedWallet: Boolean = false,
     onMediaServers: () -> Unit = {},
@@ -752,6 +753,7 @@ fun FeedScreen(
                     scope.launch { drawerState.close() }
                     onAddAccount()
                 },
+                onMoveAccount = onMoveAccount,
                 onProfile = {
                     scope.launch { drawerState.close() }
                     onProfileEdit()
