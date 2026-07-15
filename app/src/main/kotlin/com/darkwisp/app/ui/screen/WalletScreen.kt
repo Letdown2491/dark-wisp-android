@@ -71,6 +71,7 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.Surface
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -93,6 +94,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -101,9 +103,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -118,8 +117,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -146,6 +149,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontFamily
@@ -185,6 +191,22 @@ import com.darkwisp.app.viewmodel.WalletPage
 import com.darkwisp.app.viewmodel.WalletState
 import com.darkwisp.app.viewmodel.WalletViewModel
 
+// Full-screen wallet bottom sheets (Transactions, Send, Receive) expand all
+// the way to the top of the window — push the grab handle below the status
+// bar/camera cutout so it isn't visually clipped by device chrome.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WalletSheetDragHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        BottomSheetDefaults.DragHandle()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WalletScreen(
@@ -207,10 +229,30 @@ fun WalletScreen(
     // app bar to match iOS — leaves more headroom for the centered logo
     // + title layout.
     val hideAppBar = currentPage is WalletPage.Home ||
+        currentPage is WalletPage.Transactions ||
         currentPage is WalletPage.ModeSelection ||
         currentPage is WalletPage.NwcSetup ||
         currentPage is WalletPage.SparkSetup ||
-        currentPage is WalletPage.SparkRestoreSeed
+        currentPage is WalletPage.SparkRestoreSeed ||
+        currentPage is WalletPage.SendInput ||
+        currentPage is WalletPage.SendAmount ||
+        currentPage is WalletPage.SendConfirm ||
+        currentPage is WalletPage.Sending ||
+        currentPage is WalletPage.SendResult ||
+        currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveInvoice ||
+        currentPage is WalletPage.ReceiveSuccess
+
+    // Send and Receive each render as a full-screen bottom sheet over the
+    // Home dashboard, matching the Transactions sheet treatment.
+    val isSendFlow = currentPage is WalletPage.SendInput ||
+        currentPage is WalletPage.SendAmount ||
+        currentPage is WalletPage.SendConfirm ||
+        currentPage is WalletPage.Sending ||
+        currentPage is WalletPage.SendResult
+    val isReceiveFlow = currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveInvoice ||
+        currentPage is WalletPage.ReceiveSuccess
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -423,14 +465,6 @@ fun WalletScreen(
                             modifier = Modifier.padding(padding)
                         )
                     }
-                    is WalletPage.SendInput -> SendInputContent(
-                        input = viewModel.sendInput.collectAsState().value,
-                        error = viewModel.sendError.collectAsState().value,
-                        onInputChange = { viewModel.updateSendInput(it) },
-                        onNext = { viewModel.processInput() },
-                        onScanQR = { viewModel.navigateTo(WalletPage.ScanQR) },
-                        modifier = Modifier.padding(padding)
-                    )
                     is WalletPage.ScanQR -> ScanQRContent(
                         onResult = { scanned ->
                             viewModel.updateSendInput(scanned)
@@ -438,99 +472,113 @@ fun WalletScreen(
                         },
                         modifier = Modifier.padding(padding)
                     )
-                    is WalletPage.SendAmount -> {
-                        val page = currentPage as WalletPage.SendAmount
-                        // For a CLINK offer, show the service's profile name
-                        // instead of the raw noffer string.
-                        val nofferPayee = remember(page.address) {
-                            com.darkwisp.app.nostr.Noffer.decodeOrNull(page.address)
-                                ?.let { viewModel.getProfileData(it.pubkey)?.displayString }
-                        }
-                        SendAmountContent(
-                            address = nofferPayee ?: page.address,
-                            amount = viewModel.sendAmount.collectAsState().value,
-                            error = viewModel.sendError.collectAsState().value,
-                            isLoading = viewModel.isLoading.collectAsState().value,
-                            onDigit = { viewModel.updateSendAmount(it) },
-                            onBackspace = { viewModel.sendAmountBackspace() },
-                            onConfirm = {
-                                val sats = viewModel.sendAmount.value.toLongOrNull() ?: return@SendAmountContent
-                                viewModel.resolveLightningAddress(page.address, sats)
-                            },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
-                    is WalletPage.SendConfirm -> {
-                        val page = currentPage as WalletPage.SendConfirm
-                        val feeState by viewModel.feeState.collectAsState()
-                        val walletMode by viewModel.walletMode.collectAsState()
-                        LaunchedEffect(page.invoice) {
-                            viewModel.prepareFee(page.invoice)
-                        }
-                        SendConfirmContent(
-                            invoice = page.invoice,
-                            amountSats = page.amountSats,
-                            description = page.description,
-                            feeState = feeState,
-                            networkName = when (walletMode) {
-                                WalletMode.SPARK -> "Spark"
-                                WalletMode.NWC -> "NWC"
-                                else -> "Unknown"
-                            },
-                            onPay = { viewModel.payInvoice(page.invoice) },
-                            onCancel = { viewModel.navigateBack() },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
-                    is WalletPage.Sending -> SendingContent(
-                        modifier = Modifier.padding(padding)
-                    )
+                    is WalletPage.SendInput,
+                    is WalletPage.SendAmount,
+                    is WalletPage.SendConfirm,
+                    is WalletPage.Sending,
                     is WalletPage.SendResult -> {
-                        val page = currentPage as WalletPage.SendResult
-                        SendResultContent(
-                            success = page.success,
-                            message = page.message,
-                            onDone = { viewModel.navigateHome() },
+                        // Home stays visible behind the send bottom sheet.
+                        val profileKey = viewModel.profileRefreshKey.collectAsState().value
+                        WalletHomeContent(
+                            balanceMsats = balanceMsats,
+                            walletMode = viewModel.walletMode.collectAsState().value,
+                            balanceUnit = viewModel.balanceUnit.collectAsState().value,
+                            showSettingsAlert = viewModel.walletMode.collectAsState().value == WalletMode.SPARK
+                                    && !viewModel.seedBackupAcked.collectAsState().value,
+                            seedBackupAcked = viewModel.seedBackupAcked.collectAsState().value,
+                            backupMissing = viewModel.backupMissing.collectAsState().value,
+                            onSend = {},
+                            onReceive = { viewModel.navigateTo(WalletPage.ReceiveAmount) },
+                            onTransactions = {
+                                viewModel.loadTransactions()
+                                viewModel.navigateTo(WalletPage.Transactions)
+                            },
+                            onRefresh = { viewModel.refreshBalance() },
+                            onSettings = { viewModel.navigateTo(WalletPage.Settings) },
+                            onBackupToRelay = {
+                                viewModel.resetBackupStatus()
+                                viewModel.navigateTo(WalletPage.BackupToRelay)
+                            },
+                            onViewSeed = { viewModel.showMnemonicBackup() },
+                            lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                            onSetupAddress = {
+                                viewModel.resetAddressSetupState()
+                                viewModel.navigateTo(WalletPage.LightningAddressSetup)
+                            },
+                            recentTransactions = viewModel.transactions.collectAsState().value,
+                            profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
+                            pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
                     }
-                    is WalletPage.ReceiveAmount -> ReceiveAmountContent(
-                        amount = viewModel.receiveAmount.collectAsState().value,
-                        isLoading = viewModel.isLoading.collectAsState().value,
-                        lightningAddress = viewModel.lightningAddress.collectAsState().value,
-                        onAmountChange = { viewModel.setReceiveAmount(it) },
-                        onGenerate = { sats, note -> viewModel.generateInvoice(sats, note) },
-                        modifier = Modifier.padding(padding)
-                    )
-                    is WalletPage.ReceiveInvoice -> {
-                        val page = currentPage as WalletPage.ReceiveInvoice
-                        ReceiveInvoiceContent(
-                            invoice = page.invoice,
-                            amountSats = page.amountSats,
-                            onDone = { viewModel.navigateHome() },
-                            modifier = Modifier.padding(padding)
-                        )
-                    }
+                    is WalletPage.ReceiveAmount,
+                    is WalletPage.ReceiveInvoice,
                     is WalletPage.ReceiveSuccess -> {
-                        val page = currentPage as WalletPage.ReceiveSuccess
-                        ReceiveSuccessContent(
-                            amountSats = page.amountSats,
-                            onDone = { viewModel.navigateHome() },
+                        // Home stays visible behind the receive bottom sheet.
+                        val profileKey = viewModel.profileRefreshKey.collectAsState().value
+                        WalletHomeContent(
+                            balanceMsats = balanceMsats,
+                            walletMode = viewModel.walletMode.collectAsState().value,
+                            balanceUnit = viewModel.balanceUnit.collectAsState().value,
+                            showSettingsAlert = viewModel.walletMode.collectAsState().value == WalletMode.SPARK
+                                    && !viewModel.seedBackupAcked.collectAsState().value,
+                            seedBackupAcked = viewModel.seedBackupAcked.collectAsState().value,
+                            backupMissing = viewModel.backupMissing.collectAsState().value,
+                            onSend = { viewModel.navigateTo(WalletPage.SendInput) },
+                            onReceive = {},
+                            onTransactions = {
+                                viewModel.loadTransactions()
+                                viewModel.navigateTo(WalletPage.Transactions)
+                            },
+                            onRefresh = { viewModel.refreshBalance() },
+                            onSettings = { viewModel.navigateTo(WalletPage.Settings) },
+                            onBackupToRelay = {
+                                viewModel.resetBackupStatus()
+                                viewModel.navigateTo(WalletPage.BackupToRelay)
+                            },
+                            onViewSeed = { viewModel.showMnemonicBackup() },
+                            lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                            onSetupAddress = {
+                                viewModel.resetAddressSetupState()
+                                viewModel.navigateTo(WalletPage.LightningAddressSetup)
+                            },
+                            recentTransactions = viewModel.transactions.collectAsState().value,
+                            profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
+                            pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
                     }
                     is WalletPage.Transactions -> {
-                        // Observe profile refresh key so UI recomposes when new profiles arrive
+                        // Home stays visible behind the transactions bottom sheet.
                         val profileKey = viewModel.profileRefreshKey.collectAsState().value
-                        TransactionHistoryContent(
-                            transactions = viewModel.transactions.collectAsState().value,
-                            error = viewModel.transactionsError.collectAsState().value,
-                            isLoading = viewModel.isLoading.collectAsState().value,
-                            isLoadingMore = viewModel.isLoadingMore.collectAsState().value,
-                            hasMore = viewModel.hasMoreTransactions.collectAsState().value,
-                            onLoadMore = { viewModel.loadMoreTransactions() },
-                            profileLookup = { viewModel.getProfileData(it) },
-                            profileRefreshKey = profileKey,
+                        WalletHomeContent(
+                            balanceMsats = balanceMsats,
+                            walletMode = viewModel.walletMode.collectAsState().value,
+                            balanceUnit = viewModel.balanceUnit.collectAsState().value,
+                            showSettingsAlert = viewModel.walletMode.collectAsState().value == WalletMode.SPARK
+                                    && !viewModel.seedBackupAcked.collectAsState().value,
+                            seedBackupAcked = viewModel.seedBackupAcked.collectAsState().value,
+                            backupMissing = viewModel.backupMissing.collectAsState().value,
+                            onSend = { viewModel.navigateTo(WalletPage.SendInput) },
+                            onReceive = { viewModel.navigateTo(WalletPage.ReceiveAmount) },
+                            onTransactions = {},
+                            onRefresh = { viewModel.refreshBalance() },
+                            onSettings = { viewModel.navigateTo(WalletPage.Settings) },
+                            onBackupToRelay = {
+                                viewModel.resetBackupStatus()
+                                viewModel.navigateTo(WalletPage.BackupToRelay)
+                            },
+                            onViewSeed = { viewModel.showMnemonicBackup() },
+                            lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                            onSetupAddress = {
+                                viewModel.resetAddressSetupState()
+                                viewModel.navigateTo(WalletPage.LightningAddressSetup)
+                            },
+                            recentTransactions = viewModel.transactions.collectAsState().value,
+                            profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
@@ -648,6 +696,130 @@ fun WalletScreen(
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
                             modifier = Modifier.padding(padding)
                         )
+                    }
+                }
+
+                // Transactions full-screen bottom sheet — swipe down to dismiss
+                if (currentPage is WalletPage.Transactions) {
+                    val txSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    val txProfileKey = viewModel.profileRefreshKey.collectAsState().value
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.navigateBack() },
+                        sheetState = txSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
+                    ) {
+                        TransactionHistoryContent(
+                            transactions = viewModel.transactions.collectAsState().value,
+                            error = viewModel.transactionsError.collectAsState().value,
+                            isLoading = viewModel.isLoading.collectAsState().value,
+                            isLoadingMore = viewModel.isLoadingMore.collectAsState().value,
+                            hasMore = viewModel.hasMoreTransactions.collectAsState().value,
+                            onLoadMore = { viewModel.loadMoreTransactions() },
+                            profileLookup = { viewModel.getProfileData(it) },
+                            profileRefreshKey = txProfileKey,
+                            pubkey = viewModel.keyRepo.getPubkeyHex(),
+                        )
+                    }
+                }
+
+                // Send flow full-screen bottom sheet — swipe down to dismiss back to Home.
+                // Content swaps internally as the user moves through SendInput →
+                // SendAmount → SendConfirm → Sending → SendResult so the sheet
+                // itself never closes and reopens mid-flow.
+                if (isSendFlow) {
+                    val sendSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.navigateHome() },
+                        sheetState = sendSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
+                    ) {
+                        when (val page = currentPage) {
+                            is WalletPage.SendInput -> SendInputContent(
+                                input = viewModel.sendInput.collectAsState().value,
+                                error = viewModel.sendError.collectAsState().value,
+                                walletMode = viewModel.walletMode.collectAsState().value,
+                                onInputChange = { viewModel.updateSendInput(it) },
+                                onNext = { viewModel.processInput() },
+                                onScanQR = { viewModel.navigateTo(WalletPage.ScanQR) }
+                            )
+                            is WalletPage.SendAmount -> {
+                                // For a CLINK offer, show the service's profile name
+                                // instead of the raw noffer string.
+                                val nofferPayee = remember(page.address) {
+                                    com.darkwisp.app.nostr.Noffer.decodeOrNull(page.address)
+                                        ?.let { viewModel.getProfileData(it.pubkey)?.displayString }
+                                }
+                                SendAmountContent(
+                                    address = nofferPayee ?: page.address,
+                                    amount = viewModel.sendAmount.collectAsState().value,
+                                    error = viewModel.sendError.collectAsState().value,
+                                    isLoading = viewModel.isLoading.collectAsState().value,
+                                    onDigit = { viewModel.updateSendAmount(it) },
+                                    onBackspace = { viewModel.sendAmountBackspace() },
+                                    onConfirm = {
+                                        val sats = viewModel.sendAmount.value.toLongOrNull() ?: return@SendAmountContent
+                                        viewModel.resolveLightningAddress(page.address, sats)
+                                    }
+                                )
+                            }
+                            is WalletPage.SendConfirm -> {
+                                val feeState by viewModel.feeState.collectAsState()
+                                val walletMode by viewModel.walletMode.collectAsState()
+                                LaunchedEffect(page.invoice) {
+                                    viewModel.prepareFee(page.invoice)
+                                }
+                                SendConfirmContent(
+                                    invoice = page.invoice,
+                                    amountSats = page.amountSats,
+                                    description = page.description,
+                                    feeState = feeState,
+                                    networkName = when (walletMode) {
+                                        WalletMode.SPARK -> "Spark"
+                                        WalletMode.NWC -> "NWC"
+                                        else -> "Unknown"
+                                    },
+                                    onPay = { viewModel.payInvoice(page.invoice) },
+                                    onCancel = { viewModel.navigateBack() }
+                                )
+                            }
+                            is WalletPage.Sending -> SendingContent()
+                            is WalletPage.SendResult -> SendResultContent(
+                                success = page.success,
+                                message = page.message,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            else -> {}
+                        }
+                    }
+                }
+
+                // Receive flow full-screen bottom sheet — swipe down to dismiss back to Home.
+                if (isReceiveFlow) {
+                    val receiveSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.navigateHome() },
+                        sheetState = receiveSheetState,
+                        dragHandle = { WalletSheetDragHandle() }
+                    ) {
+                        when (val page = currentPage) {
+                            is WalletPage.ReceiveAmount -> ReceiveAmountContent(
+                                amount = viewModel.receiveAmount.collectAsState().value,
+                                isLoading = viewModel.isLoading.collectAsState().value,
+                                lightningAddress = viewModel.lightningAddress.collectAsState().value,
+                                onAmountChange = { viewModel.setReceiveAmount(it) },
+                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) }
+                            )
+                            is WalletPage.ReceiveInvoice -> ReceiveInvoiceContent(
+                                invoice = page.invoice,
+                                amountSats = page.amountSats,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            is WalletPage.ReceiveSuccess -> ReceiveSuccessContent(
+                                amountSats = page.amountSats,
+                                onDone = { viewModel.navigateHome() }
+                            )
+                            else -> {}
+                        }
                     }
                 }
             }
@@ -1510,7 +1682,24 @@ private fun WalletHomeContent(
 
         // ── Recent transactions inline footer ──────────────────────
         if (recentTransactions.isNotEmpty()) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .pointerInput(onTransactions) {
+                        var totalDrag = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onDragEnd = { totalDrag = 0f },
+                            onDragCancel = { totalDrag = 0f }
+                        ) { change, delta ->
+                            totalDrag += delta
+                            if (totalDrag < -40f) {
+                                totalDrag = 0f
+                                change.consume()
+                                onTransactions()
+                            }
+                        }
+                    }
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1602,6 +1791,7 @@ private fun WalletActionButton(
 private fun SendInputContent(
     input: String,
     error: String?,
+    walletMode: WalletMode = WalletMode.NONE,
     onInputChange: (String) -> Unit,
     onNext: () -> Unit,
     onScanQR: () -> Unit,
@@ -1646,39 +1836,60 @@ private fun SendInputContent(
         }
     }
 
+    val accent = WispThemeColors.zapColor
+    val fieldShape = RoundedCornerShape(14.dp)
+    val fieldBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    val hint = if (walletMode == WalletMode.SPARK) {
+        stringResource(R.string.wallet_send_input_hint_onchain)
+    } else {
+        stringResource(R.string.wallet_lightning_address_invoice)
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 20.dp)
+            .verticalScroll(rememberScrollState())
     ) {
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(8.dp))
 
         Text(
             stringResource(R.string.wallet_send),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
 
-        OutlinedTextField(
-            value = input,
-            onValueChange = onInputChange,
-            label = { Text(stringResource(R.string.wallet_lightning_address_invoice)) },
-            placeholder = { Text(stringResource(R.string.placeholder_user_domain)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = false,
-            maxLines = 4,
-            trailingIcon = {
-                IconButton(onClick = {
-                    clipboardManager.getText()?.text?.let { onInputChange(it) }
-                }) {
-                    Icon(Icons.Default.ContentPaste, contentDescription = stringResource(R.string.wallet_paste))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 120.dp)
+                .background(fieldBg, fieldShape)
+                .padding(16.dp)
+        ) {
+            val entryStyle = MaterialTheme.typography.bodyLarge.copy(
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            BasicTextField(
+                value = input,
+                onValueChange = { new ->
+                    if (!com.darkwisp.app.ui.component.NsecPasteGuard.blockIfNsec(input, new)) onInputChange(new)
+                },
+                textStyle = entryStyle,
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(accent),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    if (input.isEmpty()) {
+                        Text(hint, style = entryStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
+                    }
+                    inner()
                 }
-            }
-        )
+            )
+        }
 
         if (error != null) {
             Spacer(Modifier.height(8.dp))
@@ -1689,48 +1900,76 @@ private fun SendInputContent(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(16.dp))
 
-        // Scan QR / Import from Gallery buttons
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(fieldBg, fieldShape)
         ) {
-            OutlinedButton(
+            SendInputAction(
+                icon = Icons.Default.QrCode,
+                label = stringResource(R.string.wallet_scan_qr),
                 onClick = onScanQR,
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    Icons.Default.QrCode,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.wallet_scan_qr))
-            }
-            OutlinedButton(
+            )
+            VerticalDivider(modifier = Modifier.height(24.dp))
+            SendInputAction(
+                icon = Icons.Default.ContentPaste,
+                label = stringResource(R.string.wallet_paste),
+                onClick = {
+                    clipboardManager.getText()?.text?.let { new ->
+                        if (!com.darkwisp.app.ui.component.NsecPasteGuard.blockIfNsec(input, new)) onInputChange(new)
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+            VerticalDivider(modifier = Modifier.height(24.dp))
+            SendInputAction(
+                icon = Icons.Default.Image,
+                label = stringResource(R.string.wallet_gallery),
                 onClick = { galleryLauncher.launch("image/*") },
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    Icons.Default.Image,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.wallet_gallery))
-            }
+            )
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(24.dp))
 
         Button(
             onClick = onNext,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = input.isNotBlank()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = fieldShape,
+            enabled = input.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = accent,
+                contentColor = Color.White,
+                disabledContainerColor = fieldBg,
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         ) {
-            Text(stringResource(R.string.wallet_next))
+            Text(stringResource(R.string.wallet_next), fontWeight = FontWeight.SemiBold)
         }
+    }
+}
+
+@Composable
+private fun SendInputAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.textButtonColors(contentColor = WispThemeColors.zapColor)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
 
@@ -2104,7 +2343,9 @@ private fun SendResultContent(
 
 // --- Receive amount ---
 
-private enum class ReceiveTab { INVOICE, ADDRESS }
+private enum class InvoiceExpiry(val seconds: Int) {
+    ONE_HOUR(3600), ONE_DAY(86400), CUSTOM(0)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2113,7 +2354,7 @@ private fun ReceiveAmountContent(
     isLoading: Boolean,
     lightningAddress: String?,
     onAmountChange: (String) -> Unit,
-    onGenerate: (Long, String) -> Unit,
+    onGenerate: (Long, String, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val receiveCtx = LocalContext.current
@@ -2128,20 +2369,42 @@ private fun ReceiveAmountContent(
         ((fiatValue / btcPrice) * 100_000_000.0).toLong()
     } else null
     val satAmount: Long? = if (fiatMode) fiatSats else amount.toLongOrNull()
-    val canCreate = (satAmount ?: 0L) > 0L && !isLoading
 
     var description by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf(ReceiveTab.INVOICE) }
-    val hasLightningAddress = !lightningAddress.isNullOrBlank()
+    var showAddressQR by remember { mutableStateOf(false) }
+    var selectedExpiry by remember { mutableStateOf(InvoiceExpiry.ONE_HOUR) }
+    var customHours by remember { mutableStateOf("") }
+    val expirySecs = when (selectedExpiry) {
+        InvoiceExpiry.ONE_HOUR -> 3600
+        InvoiceExpiry.ONE_DAY -> 86400
+        InvoiceExpiry.CUSTOM -> (customHours.toIntOrNull() ?: 0) * 3600
+    }
+    val canCreate = (satAmount ?: 0L) > 0L && !isLoading &&
+        (selectedExpiry != InvoiceExpiry.CUSTOM || expirySecs > 0)
 
     val fieldShape = RoundedCornerShape(14.dp)
     val fieldBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    val scrollState = rememberScrollState()
+    var invoiceGenerating by remember { mutableStateOf(false) }
+
+    // The shared isLoading flag can flip true from unrelated wallet
+    // operations, so track invoice creation locally to avoid showing a
+    // spinner just because the sheet opened while isLoading happened to be true.
+    LaunchedEffect(isLoading) { if (!isLoading) invoiceGenerating = false }
+
+    // Scroll to the QR card once AnimatedVisibility has expanded and laid out.
+    LaunchedEffect(showAddressQR) {
+        if (showAddressQR) {
+            kotlinx.coroutines.delay(350)
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
     ) {
         Spacer(Modifier.height(8.dp))
 
@@ -2156,186 +2419,271 @@ private fun ReceiveAmountContent(
 
         Spacer(Modifier.height(20.dp))
 
-        if (hasLightningAddress) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = selectedTab == ReceiveTab.INVOICE,
-                    onClick = { selectedTab = ReceiveTab.INVOICE },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                ) { Text(stringResource(R.string.wallet_receive_invoice_tab)) }
-                SegmentedButton(
-                    selected = selectedTab == ReceiveTab.ADDRESS,
-                    onClick = { selectedTab = ReceiveTab.ADDRESS },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                ) { Text(stringResource(R.string.wallet_receive_address_tab)) }
-            }
-            Spacer(Modifier.height(20.dp))
-        }
+        // AMOUNT field
+        Text(
+            stringResource(R.string.wallet_receive_amount_label),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
 
-        if (selectedTab == ReceiveTab.ADDRESS && hasLightningAddress) {
-            ReceiveAddressBlock(address = lightningAddress!!)
-        } else {
-            // AMOUNT field
-            Text(
-                stringResource(R.string.wallet_receive_amount_label),
-                style = MaterialTheme.typography.labelMedium,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(fieldBg, fieldShape)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+        ) {
+            val amountTextStyle = TextStyle(
+                fontSize = 32.sp,
                 fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(fieldBg, fieldShape)
-                    .padding(horizontal = 16.dp, vertical = 16.dp)
-            ) {
-                val amountTextStyle = TextStyle(
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                BasicTextField(
-                    value = amount,
-                    onValueChange = { input ->
-                        val filtered = if (fiatMode) {
-                            // Allow digits + a single decimal point
-                            val sb = StringBuilder()
-                            var seenDot = false
-                            for (c in input) {
-                                if (c.isDigit()) sb.append(c)
-                                else if (c == '.' && !seenDot) { sb.append(c); seenDot = true }
-                            }
-                            sb.toString()
-                        } else {
-                            input.filter { it.isDigit() }
+            BasicTextField(
+                value = amount,
+                onValueChange = { input ->
+                    val filtered = if (fiatMode) {
+                        val sb = StringBuilder()
+                        var seenDot = false
+                        for (c in input) {
+                            if (c.isDigit()) sb.append(c)
+                            else if (c == '.' && !seenDot) { sb.append(c); seenDot = true }
                         }
-                        onAmountChange(filtered)
-                    },
-                    textStyle = amountTextStyle,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = if (fiatMode) KeyboardType.Decimal else KeyboardType.NumberPassword
-                    ),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.weight(1f),
-                    decorationBox = { inner ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (amount.isEmpty()) {
-                                Text(
-                                    "0",
-                                    style = amountTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                )
-                            }
-                            inner()
-                        }
+                        sb.toString()
+                    } else {
+                        input.filter { it.isDigit() }
                     }
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (fiatMode) currency.code else stringResource(R.string.wallet_sats),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (fiatMode && fiatSats != null && fiatSats > 0L) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "≈ %,d sats".format(fiatSats),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // NOTE field
-            Text(
-                stringResource(R.string.wallet_receive_note_label),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(fieldBg, fieldShape)
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
-            ) {
-                val noteStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                BasicTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    textStyle = noteStyle,
-                    singleLine = true,
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                    decorationBox = { inner ->
-                        if (description.isEmpty()) {
+                    onAmountChange(filtered)
+                },
+                textStyle = amountTextStyle,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (fiatMode) KeyboardType.Decimal else KeyboardType.NumberPassword
+                ),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (amount.isEmpty()) {
                             Text(
-                                stringResource(R.string.wallet_receive_note_placeholder),
-                                style = noteStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                "0",
+                                style = amountTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                             )
                         }
                         inner()
                     }
-                )
-            }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (fiatMode) currency.code else stringResource(R.string.wallet_sats),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (fiatMode && fiatSats != null && fiatSats > 0L) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "≈ %,d sats".format(fiatSats),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
 
-            Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
 
-            if (isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(fieldBg, fieldShape)
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
+        // NOTE field
+        Text(
+            stringResource(R.string.wallet_receive_note_label),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(fieldBg, fieldShape)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
+            val noteStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            BasicTextField(
+                value = description,
+                onValueChange = { description = it },
+                textStyle = noteStyle,
+                singleLine = true,
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    if (description.isEmpty()) {
                         Text(
-                            stringResource(R.string.wallet_creating_invoice),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            stringResource(R.string.wallet_receive_note_placeholder),
+                            style = noteStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                         )
                     }
+                    inner()
                 }
-            } else {
-                Button(
-                    onClick = {
-                        val sats = satAmount ?: return@Button
-                        onGenerate(sats, description)
-                    },
-                    enabled = canCreate,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // EXPIRES selector
+        Text(
+            stringResource(R.string.wallet_receive_expires_label),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                InvoiceExpiry.ONE_HOUR to stringResource(R.string.wallet_receive_expires_1h),
+                InvoiceExpiry.ONE_DAY to stringResource(R.string.wallet_receive_expires_24h),
+                InvoiceExpiry.CUSTOM to stringResource(R.string.wallet_receive_expires_custom)
+            ).forEachIndexed { _, (expiry, label) ->
+                val isSelected = selectedExpiry == expiry
+                OutlinedButton(
+                    onClick = { selectedExpiry = expiry },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
+                        contentColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+        if (selectedExpiry == InvoiceExpiry.CUSTOM) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = customHours,
+                onValueChange = { customHours = it.filter { c -> c.isDigit() } },
+                label = { Text(stringResource(R.string.wallet_receive_expires_hours)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        if (invoiceGenerating) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(fieldBg, fieldShape)
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        stringResource(R.string.wallet_creating_invoice),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            Button(
+                onClick = {
+                    val sats = satAmount ?: return@Button
+                    invoiceGenerating = true
+                    onGenerate(sats, description, expirySecs)
+                },
+                enabled = canCreate,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = fieldShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    disabledContainerColor = fieldBg,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            ) {
+                Text(
+                    stringResource(R.string.wallet_receive_create_invoice),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        // Lightning address — shown below invoice form as "or receive via" row
+        if (!lightningAddress.isNullOrBlank()) {
+            Spacer(Modifier.height(24.dp))
+            LightningAddressReceiveRow(
+                address = lightningAddress,
+                onShowQR = { showAddressQR = !showAddressQR }
+            )
+            AnimatedVisibility(visible = showAddressQR) {
+                val clipboardManager = LocalClipboardManager.current
+                val qrBitmap = remember(lightningAddress) {
+                    val writer = QRCodeWriter()
+                    val matrix = writer.encode(lightningAddress, BarcodeFormat.QR_CODE, 512, 512)
+                    val bmp = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565)
+                    for (x in 0 until matrix.width) {
+                        for (y in 0 until matrix.height) {
+                            bmp.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                        }
+                    }
+                    bmp
+                }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
-                    shape = fieldShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = Color.White,
-                        disabledContainerColor = fieldBg,
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        .padding(top = 16.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .padding(20.dp)
                 ) {
-                    Text(
-                        stringResource(R.string.wallet_receive_create_invoice),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = stringResource(R.string.cd_invoice_qr_code),
+                        modifier = Modifier
+                            .size(240.dp)
+                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .padding(10.dp)
                     )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            lightningAddress,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { clipboardManager.setText(AnnotatedString(lightningAddress)) }) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.wallet_copy_address),
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -2344,85 +2692,66 @@ private fun ReceiveAmountContent(
     }
 }
 
+// Lightning address displayed below the invoice form
 @Composable
-private fun ReceiveAddressBlock(address: String) {
+private fun LightningAddressReceiveRow(
+    address: String,
+    onShowQR: () -> Unit
+) {
     val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-
-    val qrBitmap = remember(address) {
-        val writer = QRCodeWriter()
-        val matrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
-        val bitmap = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565)
-        for (x in 0 until matrix.width) {
-            for (y in 0 until matrix.height) {
-                bitmap.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-            }
-        }
-        bitmap
-    }
-
-    val cardShape = RoundedCornerShape(16.dp)
-    val cardBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-    val actionShape = RoundedCornerShape(14.dp)
-    val actionBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(cardBg, cardShape)
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Image(
-                bitmap = qrBitmap.asImageBitmap(),
-                contentDescription = stringResource(R.string.cd_invoice_qr_code),
-                modifier = Modifier
-                    .size(260.dp)
-                    .background(Color.White, RoundedCornerShape(12.dp))
-                    .padding(8.dp)
-            )
-            Spacer(Modifier.height(12.dp))
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HorizontalDivider(modifier = Modifier.weight(1f))
             Text(
-                address,
-                style = MaterialTheme.typography.bodyMedium,
+                stringResource(R.string.wallet_receive_via_address),
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
+                modifier = Modifier.padding(horizontal = 12.dp)
             )
+            HorizontalDivider(modifier = Modifier.weight(1f))
         }
-
-        Spacer(Modifier.height(20.dp))
-
+        Spacer(Modifier.height(16.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .background(actionBg, actionShape)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    RoundedCornerShape(14.dp)
+                )
+                .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
         ) {
-            TextButton(
-                onClick = { clipboardManager.setText(AnnotatedString(address)) },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.textButtonColors(contentColor = WispThemeColors.zapColor)
-            ) {
-                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Copy address", fontWeight = FontWeight.Medium)
+            Icon(
+                Icons.Outlined.Bolt,
+                contentDescription = null,
+                tint = WispThemeColors.zapColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                address,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onShowQR) {
+                Icon(
+                    Icons.Default.QrCode,
+                    contentDescription = stringResource(R.string.wallet_receive_address_tab),
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            VerticalDivider(modifier = Modifier.height(24.dp))
-            TextButton(
-                onClick = {
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, address)
-                    }
-                    context.startActivity(Intent.createChooser(intent, "Share Lightning Address"))
-                },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.textButtonColors(contentColor = WispThemeColors.zapColor)
-            ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Share", fontWeight = FontWeight.Medium)
+            IconButton(onClick = { clipboardManager.setText(AnnotatedString(address)) }) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = stringResource(R.string.cd_copy_invoice),
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -2753,7 +3082,7 @@ private fun TransactionHistoryContent(
                     // both render. The list is deduped by (paymentHash, type)
                     // upstream, so these keys are unique.
                     items(transactions, key = { "${it.paymentHash}|${it.type}" }) { tx ->
-                        TransactionRow(tx, profileLookup, displayMode)
+                        TransactionRow(tx, profileLookup, displayMode, expandable = true)
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
                             color = MaterialTheme.colorScheme.outlineVariant
@@ -2790,20 +3119,25 @@ private fun TransactionHistoryContent(
 private fun TransactionRow(
     tx: WalletTransaction,
     profileLookup: (String) -> com.darkwisp.app.nostr.ProfileData?,
-    displayMode: WalletBalanceDisplayMode = WalletBalanceDisplayMode.SATS
+    displayMode: WalletBalanceDisplayMode = WalletBalanceDisplayMode.SATS,
+    expandable: Boolean = false
 ) {
     val isIncoming = tx.type == "incoming"
     val amountSats = tx.amountMsats / 1000
     val profile = tx.counterpartyPubkey?.let { profileLookup(it) }
     val ctx = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val fiatMode by FiatPreferences.get(ctx).fiatMode.collectAsState()
     val fiatCurrency by FiatPreferences.get(ctx).currency.collectAsState()
     val isHidden = displayMode == WalletBalanceDisplayMode.HIDDEN
     val isWalletFiat = displayMode == WalletBalanceDisplayMode.FIAT
+    var expanded by remember { mutableStateOf(false) }
 
+  Column(modifier = Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (expandable) Modifier.clickable { expanded = !expanded } else Modifier)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2856,11 +3190,26 @@ private fun TransactionRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                formatRelativeTime(tx.settledAt ?: tx.createdAt),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (tx.pending) {
+                    Text(
+                        stringResource(R.string.wallet_tx_pending),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = WispThemeColors.zapColor
+                    )
+                    Text(
+                        " · ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    formatRelativeTime(tx.settledAt ?: tx.createdAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         // Amount + fee. In HIDDEN mode every number is masked so a
@@ -2937,6 +3286,122 @@ private fun TransactionRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        if (expandable) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+
+    if (expandable) {
+        AnimatedVisibility(visible = expanded) {
+            TransactionDetailPanel(
+                tx = tx,
+                onCopy = { clipboardManager.setText(AnnotatedString(it)) }
+            )
+        }
+    }
+  }
+}
+
+@Composable
+private fun TransactionDetailPanel(
+    tx: WalletTransaction,
+    onCopy: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val sats = tx.amountMsats / 1000
+    val feeSats = tx.feeMsats / 1000
+    val fullDate = remember(tx.settledAt, tx.createdAt) {
+        val secs = tx.settledAt ?: tx.createdAt
+        java.text.SimpleDateFormat("MMM d, yyyy · h:mm a", java.util.Locale.getDefault())
+            .format(java.util.Date(secs * 1000))
+    }
+    val note = tx.description?.takeIf {
+        it.isNotBlank() && it != "null" && !it.trimStart().startsWith("{")
+    }
+    val idLabel = if (tx.isOnchain) "Transaction ID" else "Payment hash"
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        TxDetailRow("Status", if (tx.pending) "Pending" else "Completed")
+        TxDetailRow("Type", if (tx.isOnchain) "On-chain" else "Lightning")
+        TxDetailRow("Amount", "%,d sats".format(sats))
+        if (tx.feeMsats > 0) TxDetailRow("Network fee", "%,d sats".format(feeSats))
+        TxDetailRow("Date", fullDate)
+        if (note != null) TxDetailRow("Note", note)
+        TxDetailRow(idLabel, tx.paymentHash, mono = true, onCopy = { onCopy(tx.paymentHash) })
+        if (tx.isOnchain) {
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://mempool.space/tx/${tx.paymentHash}")
+                        )
+                    )
+                },
+                contentPadding = PaddingValues(0.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = WispThemeColors.zapColor)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("View on mempool.space", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TxDetailRow(
+    label: String,
+    value: String,
+    mono: Boolean = false,
+    onCopy: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(110.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = if (mono) FontFamily.Monospace else null,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        if (onCopy != null) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Default.ContentCopy,
+                contentDescription = stringResource(R.string.action_copy),
+                tint = WispThemeColors.zapColor,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onCopy)
+            )
         }
     }
 }

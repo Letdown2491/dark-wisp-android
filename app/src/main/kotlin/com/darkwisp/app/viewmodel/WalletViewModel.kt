@@ -1248,6 +1248,10 @@ class WalletViewModel(
         _sendError.value = null
     }
 
+    fun setSendAmount(value: String) {
+        _sendAmount.value = value
+    }
+
     fun updateSendAmount(digit: Char) {
         val current = _sendAmount.value
         if (current.length < 10) {
@@ -1263,7 +1267,9 @@ class WalletViewModel(
     }
 
     fun processInput(input: String = _sendInput.value) {
-        val trimmed = input.trim().removePrefix("lightning:")
+        val trimmed = input.trim()
+            .removePrefix("lightning:").removePrefix("LIGHTNING:")
+            .let { it.removePrefix("bitcoin:").removePrefix("BITCOIN:") }
         _sendError.value = null
 
         when {
@@ -1482,10 +1488,10 @@ class WalletViewModel(
         _receiveAmount.value = value
     }
 
-    fun generateInvoice(amountSats: Long, description: String = "") {
+    fun generateInvoice(amountSats: Long, description: String = "", expirySecs: Int = 3600) {
         _isLoading.value = true
         viewModelScope.launch {
-            val result = activeProvider.makeInvoice(amountSats * 1000, description)
+            val result = activeProvider.makeInvoice(amountSats * 1000, description, expirySecs)
             result.fold(
                 onSuccess = { invoice ->
                     navigateTo(WalletPage.ReceiveInvoice(invoice, amountSats))
