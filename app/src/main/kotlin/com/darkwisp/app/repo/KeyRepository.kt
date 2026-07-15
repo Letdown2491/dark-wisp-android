@@ -204,6 +204,21 @@ class KeyRepository(private val context: Context) {
         _accounts.value = accounts
     }
 
+    /**
+     * Move an account one position earlier (offset -1) or later (offset +1)
+     * in the persisted account list. No-op if already at that end.
+     */
+    fun moveAccount(pubkeyHex: String, offset: Int) {
+        val accounts = loadAccountList().toMutableList()
+        val index = accounts.indexOfFirst { it.pubkeyHex == pubkeyHex }
+        val target = index + offset
+        if (index < 0 || target < 0 || target >= accounts.size) return
+        val moved = accounts.removeAt(index)
+        accounts.add(target, moved)
+        encPrefs.edit().putString("accounts", json.encodeToString(accounts)).apply()
+        _accounts.value = accounts
+    }
+
     private fun loadAccountList(): List<AccountInfo> {
         val str = encPrefs.getString("accounts", null) ?: return emptyList()
         return try {
