@@ -78,6 +78,7 @@ import com.darkwisp.app.repo.TranslationRepository
 import com.darkwisp.app.repo.TranslationState
 import com.darkwisp.app.ui.component.FollowButton
 import com.darkwisp.app.ui.component.NoteActions
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.ui.component.PostCard
 import com.darkwisp.app.ui.component.ProfilePicture
 import com.darkwisp.app.viewmodel.RelayOption
@@ -207,7 +208,7 @@ fun SearchScreen(
                     ) {
                         TextField(
                             value = query,
-                            onValueChange = { viewModel.updateQuery(it) },
+                            onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(query, new)) viewModel.updateQuery(new) },
                             singleLine = true,
                             placeholder = { Text(stringResource(R.string.title_search)) },
                             leadingIcon = {
@@ -668,7 +669,7 @@ private fun AddRelayDialog(
         text = {
             OutlinedTextField(
                 value = url,
-                onValueChange = { url = it },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(url, new)) url = new },
                 placeholder = { Text(stringResource(R.string.placeholder_add_relay)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -742,7 +743,7 @@ private fun AuthorFilter(
             ) {
                 OutlinedTextField(
                     value = authorQuery,
-                    onValueChange = { authorQuery = it },
+                    onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(authorQuery, new)) authorQuery = new },
                     placeholder = { Text("Search for author") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),

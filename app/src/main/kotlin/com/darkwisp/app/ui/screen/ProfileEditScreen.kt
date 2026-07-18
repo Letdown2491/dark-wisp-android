@@ -213,7 +213,7 @@ fun ProfileEditScreen(
             Column(modifier = Modifier.padding(horizontal = 16.dp).offset(y = (-16).dp)) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { viewModel.updateName(it) },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(name, new)) viewModel.updateName(new) },
                 label = { Text(stringResource(R.string.placeholder_name)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().scrollOnFocus()
@@ -221,7 +221,7 @@ fun ProfileEditScreen(
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = about,
-                onValueChange = { viewModel.updateAbout(it) },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(about, new)) viewModel.updateAbout(new) },
                 label = { Text(stringResource(R.string.placeholder_about)) },
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth().scrollOnFocus()
@@ -229,7 +229,7 @@ fun ProfileEditScreen(
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = nip05,
-                onValueChange = { viewModel.updateNip05(it) },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(nip05, new)) viewModel.updateNip05(new) },
                 label = { Text(stringResource(R.string.placeholder_nip05)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().scrollOnFocus()
@@ -237,7 +237,7 @@ fun ProfileEditScreen(
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = lud16,
-                onValueChange = { viewModel.updateLud16(it) },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(lud16, new)) viewModel.updateLud16(new) },
                 label = { Text(stringResource(R.string.placeholder_lightning_address)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().scrollOnFocus()

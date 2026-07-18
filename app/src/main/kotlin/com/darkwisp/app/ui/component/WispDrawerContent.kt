@@ -286,7 +286,7 @@ fun WispDrawerContent(
                         text = {
                             androidx.compose.material3.OutlinedTextField(
                                 value = statusText,
-                                onValueChange = { statusText = it },
+                                onValueChange = { new -> if (!com.darkwisp.app.ui.component.NsecPasteGuard.blockIfNsec(statusText, new)) statusText = new },
                                 label = { Text("What are you up to?") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
