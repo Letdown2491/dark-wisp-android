@@ -559,7 +559,12 @@ fun DmConversationScreen(
                             }
                             androidx.compose.foundation.text.BasicTextField(
                                 value = dmTfv,
-                                onValueChange = { dmTfv = it; viewModel.updateMessageText(it.text) },
+                                onValueChange = { new ->
+                                    if (!com.darkwisp.app.ui.component.NsecPasteGuard.blockIfNsec(dmTfv.text, new.text)) {
+                                        dmTfv = new
+                                        viewModel.updateMessageText(new.text)
+                                    }
+                                },
                                 modifier = Modifier.weight(1f).heightIn(min = 28.dp).padding(top = 4.dp),
                                 enabled = uploadProgress == null,
                                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),

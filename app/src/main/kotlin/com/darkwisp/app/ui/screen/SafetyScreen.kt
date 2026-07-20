@@ -43,6 +43,7 @@ import com.darkwisp.app.repo.ExtendedNetworkCache
 import com.darkwisp.app.repo.MuteRepository
 import com.darkwisp.app.repo.ProfileRepository
 import com.darkwisp.app.repo.SafetyPreferences
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.ui.component.ProfilePicture
 import kotlinx.coroutines.flow.StateFlow
 
@@ -145,7 +146,7 @@ private fun MutedWordsTab(
         ) {
             OutlinedTextField(
                 value = newWord,
-                onValueChange = { newWord = it },
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(newWord, new)) newWord = new },
                 placeholder = { Text(stringResource(R.string.placeholder_add_word_phrase)) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)

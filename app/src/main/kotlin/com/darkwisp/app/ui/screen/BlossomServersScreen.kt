@@ -45,6 +45,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.res.stringResource
 import com.darkwisp.app.R
 import com.darkwisp.app.relay.RelayPool
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.viewmodel.BlossomServersViewModel
 import kotlin.math.roundToInt
 
@@ -95,7 +96,7 @@ fun BlossomServersScreen(
             ) {
                 OutlinedTextField(
                     value = newServerUrl,
-                    onValueChange = { viewModel.updateNewServerUrl(it) },
+                    onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(newServerUrl, new)) viewModel.updateNewServerUrl(new) },
                     label = { Text("https://...") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)

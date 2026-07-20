@@ -3885,7 +3885,7 @@ private fun SparkRestoreSeedContent(
 
         OutlinedTextField(
             value = restoreMnemonic,
-            onValueChange = onRestoreMnemonicChange,
+            onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(restoreMnemonic, new)) onRestoreMnemonicChange(new) },
             label = { Text("Recovery phrase") },
             placeholder = { Text("Enter 12 or 24 words...") },
             modifier = Modifier.fillMaxWidth(),
@@ -4825,7 +4825,7 @@ private fun DeleteWalletConfirmContent(
 
             OutlinedTextField(
                 value = confirmText,
-                onValueChange = onConfirmTextChange,
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(confirmText, new)) onConfirmTextChange(new) },
                 label = { Text("Type DELETE to confirm") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true

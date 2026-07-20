@@ -323,7 +323,11 @@ fun ComposeScreen(
                     }
                     OutlinedTextField(
                         value = content,
-                        onValueChange = { viewModel.updateContent(it) },
+                        onValueChange = { new ->
+                            if (!com.darkwisp.app.ui.component.NsecPasteGuard.blockIfNsec(content.text, new.text)) {
+                                viewModel.updateContent(new)
+                            }
+                        },
                         label = { Text(stringResource(R.string.compose_gallery_placeholder)) },
                         enabled = !publishing && countdownSeconds == null,
                         visualTransformation = galleryEmojiVisual,
@@ -709,6 +713,7 @@ fun ComposeScreen(
                             }),
                         enabled = enabled,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                        inputTransformation = com.darkwisp.app.ui.component.NsecPasteGuard.inputTransformation,
                         lineLimits = TextFieldLineLimits.MultiLine(),
                         outputTransformation = outputTransformation,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(

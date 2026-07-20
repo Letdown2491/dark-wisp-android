@@ -50,6 +50,7 @@ import com.darkwisp.app.relay.RelayHealthTracker
 import com.darkwisp.app.repo.RelayInfoRepository
 import com.darkwisp.app.nostr.ProfileData
 import com.darkwisp.app.nostr.RelaySet
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.ui.component.ProfilePicture
 import com.darkwisp.app.ui.component.RelayIcon
 import com.darkwisp.app.ui.theme.WispThemeColors
@@ -377,7 +378,7 @@ private fun RelayHeader(
                                     // Create new set
                                     androidx.compose.material3.OutlinedTextField(
                                         value = newSetName,
-                                        onValueChange = { newSetName = it },
+                                        onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(newSetName, new)) newSetName = new },
                                         placeholder = { Text(stringResource(R.string.placeholder_new_set_name)) },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth(),

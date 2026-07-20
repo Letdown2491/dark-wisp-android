@@ -578,6 +578,7 @@ fun GroupRoomScreen(
                             .then(pasteImagesModifier),
                         enabled = uploadProgress == null,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                        inputTransformation = com.darkwisp.app.ui.component.NsecPasteGuard.inputTransformation,
                         outputTransformation = groupEmojiTransformation,
                         lineLimits = lineLimits,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(

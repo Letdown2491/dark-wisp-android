@@ -51,6 +51,7 @@ import com.darkwisp.app.relay.RelayConfig
 import com.darkwisp.app.relay.RelayPool
 import com.darkwisp.app.relay.RelaySetType
 import com.darkwisp.app.R
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.ui.theme.wispSwitchColors
 import com.darkwisp.app.viewmodel.RelayViewModel
 
@@ -117,7 +118,7 @@ fun RelayScreen(
                         ) {
                             OutlinedTextField(
                                 value = newRelayUrl,
-                                onValueChange = { viewModel.updateNewRelayUrl(it) },
+                                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(newRelayUrl, new)) viewModel.updateNewRelayUrl(new) },
                                 label = { Text(stringResource(R.string.local_relay_url_hint)) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
@@ -139,7 +140,7 @@ fun RelayScreen(
                     ) {
                         OutlinedTextField(
                             value = newRelayUrl,
-                            onValueChange = { viewModel.updateNewRelayUrl(it) },
+                            onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(newRelayUrl, new)) viewModel.updateNewRelayUrl(new) },
                             label = { Text(stringResource(R.string.placeholder_relay_url)) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)

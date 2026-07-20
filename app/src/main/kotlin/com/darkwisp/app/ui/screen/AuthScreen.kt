@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -64,6 +65,7 @@ import androidx.compose.ui.res.stringResource
 import com.darkwisp.app.R
 import com.darkwisp.app.nostr.RemoteSignerBridge
 import com.darkwisp.app.nostr.toHex
+import com.darkwisp.app.ui.component.NsecPasteGuard
 import com.darkwisp.app.ui.component.TorCornerButton
 import com.darkwisp.app.viewmodel.AuthViewModel
 
@@ -105,6 +107,11 @@ fun AuthScreen(
         }
         viewModel.loginWithSigner(pubkeyHex, pkg)
         signerLoginComplete = true
+    }
+
+    DisposableEffect(Unit) {
+        NsecPasteGuard.nsecPasteAllowed = true
+        onDispose { NsecPasteGuard.nsecPasteAllowed = false }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
