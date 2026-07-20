@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -28,8 +27,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.animation.core.LinearEasing
@@ -38,7 +39,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -126,17 +126,22 @@ fun SplashScreen(
         )
 
         if (onCancel != null) {
+            // Pinned to the top-start corner (mirroring TorCornerButton at
+            // top-end) so it's always reachable. Previously this sat at
+            // BottomCenter with bottom padding, where the logo/wordmark/action
+            // buttons column painted over it.
             Text(
-                text = "Cancel",
+                text = stringResource(R.string.btn_cancel),
                 style = MaterialTheme.typography.labelLarge,
-                color = androidx.compose.ui.graphics.Color.White,
+                color = Color.White,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 120.dp)
-                    .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f))
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 16.dp, top = 16.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.25f))
                     .clickable(onClick = onCancel)
-                    .padding(horizontal = 28.dp, vertical = 12.dp)
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
             )
         }
 
@@ -166,28 +171,15 @@ fun SplashScreen(
                 ),
                 label = "sway"
             )
-            Icon(
-                painter = painterResource(R.drawable.ic_wisp_logo),
+            Image(
+                painter = painterResource(R.drawable.ic_brand_logo),
                 contentDescription = stringResource(R.string.cd_wisp_logo),
-                tint = Color.Unspecified,
                 modifier = Modifier
-                    .size(96.dp)
+                    .size(144.dp)
+                    .clip(CircleShape)
                     .graphicsLayer {
                         translationY = bob * density
                         rotationZ = sway
-                    }
-                    .drawBehind {
-                        drawCircle(
-                            brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                                colors = listOf(
-                                    Color.Black,
-                                    Color.Black.copy(alpha = 0.6f),
-                                    Color.Transparent
-                                ),
-                                radius = size.minDimension * 0.65f
-                            ),
-                            radius = size.minDimension * 0.65f
-                        )
                     }
             )
             Text(
@@ -195,9 +187,16 @@ fun SplashScreen(
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 56.sp,
-                    fontWeight = FontWeight.W500
+                    fontWeight = FontWeight.W500,
+                    // Black fill with a soft orange halo behind each glyph —
+                    // reads as dark text ringed in an orange glow.
+                    shadow = Shadow(
+                        color = Color(0xFFFF9800),
+                        offset = Offset(0f, 0f),
+                        blurRadius = 22f
+                    )
                 ),
-                color = Color.White
+                color = Color.Black
             )
             liveMetrics?.let { OnlineCard(it) }
 
