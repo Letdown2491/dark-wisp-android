@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -60,7 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -289,6 +290,27 @@ fun PostCard(
                 }
             }
         }
+        if (replyToName != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.Reply,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.post_replying_to, replyToName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             ProfilePicture(
                 url = profile?.picture,
@@ -298,30 +320,25 @@ fun PostCard(
             )
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(onClick = onProfileClick)
-                )
-                if (replyToName != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "replying to ",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = replyToName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable {
-                                replyToPubkey?.let { onNavigateToProfile?.invoke(it) }
-                            }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable(onClick = onProfileClick)
+                    )
+                    profile?.nip05?.let { nip05 ->
+                        Spacer(Modifier.width(4.dp))
+                        Nip05Badge(
+                            nip05 = nip05,
+                            pubkey = event.pubkey,
+                            nip05Repo = nip05Repo,
+                            onClick = onProfileClick,
+                            showHandle = false
                         )
                     }
                 }
@@ -338,14 +355,6 @@ fun PostCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                    )
-                }
-                profile?.nip05?.let { nip05 ->
-                    Nip05Badge(
-                        nip05 = nip05,
-                        pubkey = event.pubkey,
-                        nip05Repo = nip05Repo,
-                        onClick = onProfileClick
                     )
                 }
             }
@@ -1261,7 +1270,7 @@ private val dateTimeYearFormat = SimpleDateFormat("MMM d, yyyy", Locale.US)
 
 /**
  * Format an epoch timestamp into a relative or absolute time string.
- * Avoids Calendar allocations — uses simple arithmetic for "yesterday" check.
+ * Avoids Calendar allocations for the s/m/h/d tiers — simple arithmetic.
  */
 private fun formatTimestamp(epoch: Long): String {
     val now = System.currentTimeMillis()
@@ -1279,7 +1288,7 @@ private fun formatTimestamp(epoch: Long): String {
     if (hours < 24) return "${hours}h"
 
     val days = diff / (24 * 60 * 60 * 1000L)
-    if (days == 1L) return "yesterday"
+    if (days < 7) return "${days}d"
 
     val date = Date(millis)
     val cal = java.util.Calendar.getInstance()
@@ -1307,6 +1316,10 @@ internal fun Nip05Badge(
     onClick: (() -> Unit)? = null,
     maxLines: Int = 1,
     verifiedTint: Color = MaterialTheme.colorScheme.primary,
+    /** When false, render only the verification icon — no handle text. The handle itself
+     *  is reserved for the profile screen; everywhere else (feed, threads, comments) just
+     *  the badge icon appears next to the username. */
+    showHandle: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (nip05.isBlank()) return
@@ -1335,6 +1348,25 @@ internal fun Nip05Badge(
             }
         )
     ) {
+        if (!showHandle) {
+            // Icon-only badge: appears once verification resolves. No retry icon here —
+            // a transient relay error shouldn't flag every row across the timeline.
+            when {
+                status == Nip05Status.VERIFIED -> Icon(
+                    Icons.Default.Verified,
+                    contentDescription = "Verified",
+                    tint = verifiedTint,
+                    modifier = Modifier.size(14.dp)
+                )
+                isImpersonator -> Icon(
+                    Icons.Default.Cancel,
+                    contentDescription = "Impersonator",
+                    tint = Color.Red,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            return@Row
+        }
         Text(
             text = nip05,
             style = MaterialTheme.typography.bodySmall,
@@ -1346,7 +1378,7 @@ internal fun Nip05Badge(
         if (status == Nip05Status.VERIFIED) {
             Spacer(Modifier.width(4.dp))
             Icon(
-                Icons.Default.CheckCircle,
+                Icons.Default.Verified,
                 contentDescription = "Verified",
                 tint = verifiedTint,
                 modifier = Modifier.size(14.dp)
